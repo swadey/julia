@@ -140,7 +140,7 @@ function try_include(f::String)
 end
 
 function process_options(args::Array{Any,1})
-    global ARGS
+    global ARGS, bind_addr
     quiet = false
     repl = true
     startup = true
@@ -152,8 +152,11 @@ function process_options(args::Array{Any,1})
         if args[i]=="-q" || args[i]=="--quiet"
             quiet = true
         elseif args[i]=="--worker"
-            start_worker(args[i+1])
+            start_worker()
             # doesn't return
+        elseif args[i]=="--bind-to"
+            i += 1
+            bind_addr = args[i]
         elseif args[i]=="-e"
             # TODO: support long options
             repl = false
@@ -222,6 +225,9 @@ function _start()
     global const stdin_stream = make_stdin_stream()
     global const stderr_stream = make_stderr_stream()
     global OUTPUT_STREAM = stdout_stream
+
+    # set default local address
+    global bind_addr = getipaddr()
 
     librandom_init()
 
