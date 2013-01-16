@@ -80,7 +80,7 @@ merge(d::Associative, others::Associative...) = merge!(copy(d), others...)
 function filter!(f::Function, d::Associative)
     for (k,v) in d
         if !f(k,v)
-            del(d,k)
+            delete!(d,k)
         end
     end
     return d
@@ -92,22 +92,11 @@ valtype{K,V}(a::Associative{K, V}) = V
 
 # some support functions
 
-function _tablesz(i::Integer)
-    if i < 16
-        return 16
-    end
-    if i&(i-1) == 0
-        return i
-    end
-    while (i&(i-1) != 0)
-        i = i&(i-1)
-    end
-    return i<<1
-end
+_tablesz(x::Integer) = x < 16 ? 16 : one(x)<<((sizeof(x)<<3)-leading_zeros(x-1))
 
 function ref(t::Associative, key)
     v = get(t, key, secret_table_token)
-    if is(v,secret_table_token)
+    if is(v, secret_table_token)
         throw(KeyError(key))
     end
     return v
@@ -131,10 +120,15 @@ end
 get(t::ObjectIdDict, key::ANY, default::ANY) =
     ccall(:jl_eqtable_get, Any, (Any, Any, Any), t.ht, key, default)
 
-del(t::ObjectIdDict, key::ANY) =
-    (ccall(:jl_eqtable_del, Int32, (Any, Any), t.ht, key); t)
+delete!(t::ObjectIdDict, key::ANY, default::ANY) =
+    ccall(:jl_eqtable_del, Any, (Any, Any, Any), t.ht, key, default)
 
-del_all(t::ObjectIdDict) = (t.ht = cell(length(t.ht)); t)
+function delete!(t::ObjectIdDict, key::ANY)
+    val = delete!(t, key, secret_table_token)
+    !is(val,secret_table_token) ? val : throw(KeyError(key))
+end
+
+empty!(t::ObjectIdDict) = (t.ht = cell(length(t.ht)); t)
 
 start(t::ObjectIdDict) = 0
 done(t::ObjectIdDict, i) = is(next(t,i),())
@@ -329,7 +323,7 @@ function resize(d::Dict, newsz)
     rehash(d, newsz)
 end
 
-function del_all{K,V}(h::Dict{K,V})
+function empty!{K,V}(h::Dict{K,V})
     fill!(h.slots, 0x0)
     sz = length(h.slots)
     h.keys = Array(K, sz)
@@ -444,17 +438,24 @@ function key{K,V}(h::Dict{K,V}, key, deflt)
     return (index<0) ? deflt : h.keys[index]::K
 end
 
-function del(h::Dict, key)
+function _delete!(h::Dict, index)
+    val = h.vals[index]
+    h.slots[index] = 0x2
+    ccall(:jl_arrayunset, Void, (Any, Uint), h.keys, index-1)
+    ccall(:jl_arrayunset, Void, (Any, Uint), h.vals, index-1)
+    h.ndel += 1
+    h.count -= 1
+    return val
+end
+
+function delete!(h::Dict, key)
     index = ht_keyindex(h, key)
-    if index > 0
-        h.slots[index] = 0x2
-        ccall(:jl_arrayunset, Void, (Any, Uint), h.keys, index-1)
-        ccall(:jl_arrayunset, Void, (Any, Uint), h.vals, index-1)
-        h.ndel += 1
-        h.count -= 1
-        return h
-    end
-    throw(KeyError(key))
+    index > 0 ? _delete!(h, index) : throw(KeyError(key))
+end
+
+function delete!(h::Dict, key, default)
+    index = ht_keyindex(h, key)
+    index > 0 ? _delete!(h, index) : default
 end
 
 function skip_deleted(h::Dict, i)
@@ -490,7 +491,7 @@ end
 
 function add_weak_key(t::Dict, k, v)
     if is(t.deleter, identity)
-        t.deleter = x->del(t, x)
+        t.deleter = x->delete!(t, x)
     end
     t[WeakRef(k)] = v
     # TODO: it might be better to avoid the finalizer, allow
@@ -502,7 +503,7 @@ end
 
 function add_weak_value(t::Dict, k, v)
     t[k] = WeakRef(v)
-    finalizer(v, x->del(t, k))
+    finalizer(v, x->delete!(t, k))
     return t
 end
 
@@ -523,9 +524,10 @@ function key{K}(wkh::WeakKeyDict{K}, kk, deflt)
     return k.value::K
 end
 
-get{K}(wkh::WeakKeyDict{K}, key, deflt) = get(wkh.ht, key, deflt)
-del{K}(wkh::WeakKeyDict{K}, key) = del(wkh.ht, key)
-del_all(wkh::WeakKeyDict)  = (del_all(wkh.ht); wkh)
+get{K}(wkh::WeakKeyDict{K}, key, def) = get(wkh.ht, key, def)
+delete!{K}(wkh::WeakKeyDict{K}, key) = delete!(wkh.ht, key)
+delete!{K}(wkh::WeakKeyDict{K}, key, def) = delete!(wkh.ht, key, def)
+empty!(wkh::WeakKeyDict)  = (empty!(wkh.ht); wkh)
 has{K}(wkh::WeakKeyDict{K}, key) = has(wkh.ht, key)
 ref{K}(wkh::WeakKeyDict{K}, key) = ref(wkh.ht, key)
 isempty(wkh::WeakKeyDict) = isempty(wkh.ht)
@@ -537,4 +539,3 @@ function next{K}(t::WeakKeyDict{K}, i)
     ((kv[1].value::K,kv[2]), i)
 end
 length(t::WeakKeyDict) = length(t.ht)
-

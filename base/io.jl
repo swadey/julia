@@ -1,6 +1,7 @@
 ## core stream types ##
 
 abstract IO
+# the first argument to any IO MUST be a POINTER (to a JL_STREAM) or using show on it will cause memory corruption
 
 # Generic IO functions
 
@@ -46,7 +47,7 @@ write(s::IO, x::Float32) = write(s, box(Int32,unbox(Float32,x)))
 write(s::IO, x::Float64) = write(s, box(Int64,unbox(Float64,x)))
 
 function write(s::IO, a::AbstractArray)
-    for i = 1:numel(a)
+    for i = 1:length(a)
         write(s, a[i])
     end
 end
@@ -70,8 +71,9 @@ function write(s::IO, c::Char)
         write(s, uint8(((c >> 6)  & 0x3F ) | 0x80))
         write(s, uint8(( c        & 0x3F ) | 0x80))
         return 4
+    else
+        return write(s, '\ufffd')
     end
-    error("invalid Unicode code point: U+", hex(c))
 end
 
 # all subtypes should implement this
@@ -97,7 +99,7 @@ read{T}(s::IO, t::Type{T}, d1::Integer, dims::Integer...) =
 read{T}(s::IO, ::Type{T}, dims::Dims) = read(s, Array(T, dims))
 
 function read{T}(s::IO, a::Array{T})
-    for i = 1:numel(a)
+    for i = 1:length(a)
         a[i] = read(s, T)
     end
     return a
@@ -143,7 +145,7 @@ function readuntil{T}(s::IO, delim::T)
     out = T[]
     while !eof(s)
         c = read(s, T)
-        push(out, c)
+        push!(out, c)
         if c == delim
             break
         end
@@ -191,7 +193,7 @@ function readlines(s, fx::Function...)
         for f in fx
           l = f(l)
         end
-        push(a, l)
+        push!(a, l)
     end
     return a
 end
@@ -208,24 +210,26 @@ else
     typealias FileOffset Int64
 end
 
-type IOStream <: IO
-    # NOTE: for some reason the order of these field is significant!?
+abstract Stream <: IO
+
+type IOStream <: Stream
+    handle::Ptr{Void}
     ios::Array{Uint8,1}
     name::String
 
-    IOStream(name::String, buf::Array{Uint8,1}) = new(buf, name)
-
-    # TODO: delay adding finalizer, e.g. for memio with a small buffer, or
-    # in the case where we takebuf it.
-    function IOStream(name::String, finalize::Bool)
-        x = new(zeros(Uint8,sizeof_ios_t), name)
-        if finalize
-            finalizer(x, close)
-        end
-        return x
-    end
-    IOStream(name::String) = IOStream(name, true)
+    IOStream(name::String, buf::Array{Uint8,1}) = new(pointer(buf), buf, name)
 end
+# TODO: delay adding finalizer, e.g. for memio with a small buffer, or
+# in the case where we takebuf it.
+function IOStream(name::String, finalize::Bool)
+    buf = zeros(Uint8,sizeof_ios_t)
+    x = IOStream(name, buf)
+    if finalize
+        finalizer(x, close)
+    end
+    return x
+end
+IOStream(name::String) = IOStream(name, true)
 
 convert(T::Type{Ptr{Void}}, s::IOStream) = convert(T, s.ios)
 show(io, s::IOStream) = print(io, "IOStream(", s.name, ")")
@@ -265,10 +269,6 @@ end
 fdio(name::String, fd::Integer) = fdio(name, fd, false)
 fdio(fd::Integer, own::Bool) = fdio(string("<fd ",fd,">"), fd, own)
 fdio(fd::Integer) = fdio(fd, false)
-
-make_stdin_stream() = fdio("<stdin>", ccall(:jl_stdin, Int32, ()))
-make_stderr_stream() = fdio("<stderr>", ccall(:jl_stderr, Int32, ()))
-make_stdout_stream() = IOStream("<stdout>", ccall(:jl_stdout_stream, Any, ()))
 
 function open(fname::String, rd::Bool, wr::Bool, cr::Bool, tr::Bool, ff::Bool)
     s = IOStream(strcat("<file ",fname,">"))
@@ -313,19 +313,20 @@ memio() = memio(0, true)
 
 ## low-level calls ##
 
-write(s::IOStream, b::Uint8) = ccall(:ios_putc, Int32, (Int32, Ptr{Void}), b, s.ios)
+write(s::IOStream, b::Uint8) = ccall(:jl_putc, Int32, (Uint8, Ptr{Void}), b, s.ios)
+write(s::IOStream, c::Char) = ccall(:jl_pututf8, Int32, (Ptr{Void}, Char), s.ios, c)
 
 function write{T}(s::IOStream, a::Array{T})
     if isa(T,BitsKind)
-        ccall(:ios_write, Uint, (Ptr{Void}, Ptr{Void}, Uint),
-              s.ios, a, numel(a)*sizeof(T))
+        ccall(:jl_write, Uint, (Ptr{Void}, Ptr{Void}, Uint),
+              s.ios, a, length(a)*sizeof(T))
     else
         invoke(write, (IO, Array), s, a)
     end
 end
 
 function write(s::IOStream, p::Ptr, nb::Integer)
-    ccall(:ios_write, Uint, (Ptr{Void}, Ptr{Void}, Uint), s.ios, p, nb)
+    ccall(:jl_write, Uint, (Ptr{Void}, Ptr{Void}, Uint), s.ios, p, nb)
 end
 
 function write{T,N,A<:Array}(s::IOStream, a::SubArray{T,N,A})
@@ -354,7 +355,7 @@ end
 
 function read{T}(s::IOStream, a::Array{T})
     if isa(T,BitsKind)
-        nb = numel(a)*sizeof(T)
+        nb = length(a)*sizeof(T)
         if ccall(:ios_readall, Uint,
                  (Ptr{Void}, Ptr{Void}, Uint), s.ios, a, nb) < nb
             throw(EOFError())
@@ -422,76 +423,6 @@ function readall(s::IOStream)
     takebuf_string(dest)
 end
 readall(filename::String) = open(readall, filename)
-
-## select interface ##
-
-const sizeof_fd_set = int(ccall(:jl_sizeof_fd_set, Int32, ()))
-
-type FDSet
-    data::Array{Uint8,1}
-    nfds::Int32
-
-    function FDSet()
-        ar = Array(Uint8, sizeof_fd_set)
-        ccall(:jl_fd_zero, Void, (Ptr{Void},), ar)
-        new(ar, 0)
-    end
-end
-
-isempty(s::FDSet) = (s.nfds==0)
-
-function add(s::FDSet, i::Integer)
-    if !(0 <= i < sizeof_fd_set*8)
-        error("invalid descriptor ", i)
-    end
-    ccall(:jl_fd_set, Void, (Ptr{Void}, Int32), s.data, i)
-    if i >= s.nfds
-        s.nfds = i+1
-    end
-    return s
-end
-
-function has(s::FDSet, i::Integer)
-    if 0 <= i < sizeof_fd_set*8
-        return ccall(:jl_fd_isset, Int32, (Ptr{Void}, Int32), s.data, i)!=0
-    end
-    return false
-end
-
-function del(s::FDSet, i::Integer)
-    if 0 <= i < sizeof_fd_set*8
-        ccall(:jl_fd_clr, Void, (Ptr{Void}, Int32), s.data, i)
-        if i == s.nfds-1
-            s.nfds -= 1
-            while s.nfds>0 && !has(s, s.nfds-1)
-                s.nfds -= 1
-            end
-        end
-    end
-    return s
-end
-
-function del_all(s::FDSet)
-    ccall(:jl_fd_zero, Void, (Ptr{Void},), s.data)
-    s.nfds = 0
-    return s
-end
-
-begin
-    local tv = Array(Uint8, int(ccall(:jl_sizeof_timeval, Int32, ())))
-    global select_read
-    function select_read(readfds::FDSet, timeout::Real)
-        if timeout == Inf
-            tout = C_NULL
-        else
-            ccall(:jl_set_timeval, Void, (Ptr{Void}, Float64), tv, timeout)
-            tout = convert(Ptr{Void}, tv)
-        end
-        ccall(:select, Int32,
-              (Int32, Ptr{Void}, Ptr{Void}, Ptr{Void}, Ptr{Void}),
-              readfds.nfds, readfds.data, C_NULL, C_NULL, tout)
-    end
-end
 
 ## Character streams ##
 const _wstmp = Array(Char, 1)

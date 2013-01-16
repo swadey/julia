@@ -69,7 +69,7 @@ for elty in (Float32, Float64, Complex64, Complex128)
         d,v   = eig(a)                          # non-symmetric eigen decomposition
         for i in 1:size(a,2) @assert_approx_eq a*v[:,i] d[i]*v[:,i] end
     
-        u,s,vt = svd(a)                         # singular value decomposition
+        u,s,vt = svdt(a)                        # singular value decomposition
         @assert_approx_eq u*diagmm(s,vt) a
     
         x = a \ b
@@ -82,15 +82,15 @@ for elty in (Float32, Float64, Complex64, Complex128)
         @assert_approx_eq tril(a)*x b
 
         # Test null
-        bnull = null(b')
-        @assert_approx_eq_eps norm(b'bnull) zero(elty) n*eps(one(elty))
-        @assert_approx_eq_eps norm(bnull'b) zero(elty) n*eps(one(elty))
+        a15null = null(a[:,1:5]')
+        @assert_approx_eq_eps norm(a[:,1:5]'a15null) zero(elty) n*eps(one(elty))
+        @assert_approx_eq_eps norm(a15null'a[:,1:5]) zero(elty) n*eps(one(elty))
         @test size(null(b), 2) == 0
 
         # Test pinv
-        pinvb = pinv(b)
-        @assert_approx_eq b*pinvb*b b
-        @assert_approx_eq pinvb*b*pinvb pinvb
+        pinva15 = pinv(a[:,1:5])
+        @assert_approx_eq a[:,1:5]*pinva15*a[:,1:5] a[:,1:5]
+        @assert_approx_eq pinva15*a[:,1:5]*pinva15 pinva15
     
         # Complex vector rhs
         x = a\complex(b)
@@ -117,6 +117,9 @@ for elty in (Float32, Float64, Complex64, Complex128)
     
         x = a\b                            # Rank deficient
         @assert_approx_eq det((a*x-b)'*(a*x-b)) convert(elty, 4.437969924812031)
+
+        x = convert(Matrix{elty}, [1 0 0; 0 1 -1]) \ convert(Vector{elty}, [1,1]) # Underdetermined minimum norm
+        @assert_approx_eq x convert(Vector{elty}, [1, 0.5, -0.5])
 
         # symmetric, positive definite
         @assert_approx_eq inv(convert(Matrix{elty}, [6. 2; 2 1])) convert(Matrix{elty}, [0.5 -1; -1 3])

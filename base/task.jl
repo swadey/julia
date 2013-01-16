@@ -3,22 +3,15 @@ show(io, t::Task) = print(io, "Task")
 current_task() = ccall(:jl_get_current_task, Task, ())
 istaskdone(t::Task) = t.done
 
-# task-local storage
-function tls()
+function task_local_storage()
     t = current_task()
-    if is(t.tls, nothing)
-        t.tls = ObjectIdDict()
+    if is(t.storage, nothing)
+        t.storage = ObjectIdDict()
     end
-    (t.tls)::ObjectIdDict
+    (t.storage)::ObjectIdDict
 end
-
-function tls(key)
-    tls()[key]
-end
-
-function tls(key, val)
-    tls()[key] = val
-end
+task_local_storage(key) = task_local_storage()[key]
+task_local_storage(key, val) = (task_local_storage()[key] = val)
 
 function produce(v)
     ct = current_task()
@@ -27,7 +20,7 @@ function produce(v)
         Q = q::Array{Any,1}
         if !isempty(Q)
             # make a task waiting for us runnable again
-            enq_work(pop(Q))
+            enq_work(pop!(Q))
         end
     end
     yieldto(ct.last, v)
@@ -50,7 +43,7 @@ function consume(P::Task)
         if !is(q, nothing)
             Q = q::Array{Any,1}
             while !isempty(Q)
-                enq_work(pop(Q))
+                enq_work(pop!(Q))
             end
         end
     end

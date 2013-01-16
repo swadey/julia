@@ -28,8 +28,8 @@ is_utf8_start(byte::Uint8) = ((byte&0xc0)!=0x80)
 
 ## required core functionality ##
 
-length(s::UTF8String) = length(s.data)
-strlen(s::UTF8String) = ccall(:u8_strlen, Int, (Ptr{Uint8},), s.data)
+endof(s::UTF8String) = thisind(s,length(s.data))
+length(s::UTF8String) = ccall(:u8_strlen, Int, (Ptr{Uint8},), s.data)
 
 function ref(s::UTF8String, i::Int)
     d = s.data
@@ -72,11 +72,12 @@ end
 ## overload methods for efficiency ##
 
 isvalid(s::UTF8String, i::Integer) =
-    (1 <= i <= length(s.data)) && is_utf8_start(s.data[i])
+    (1 <= i <= endof(s.data)) && is_utf8_start(s.data[i])
 
 function ref(s::UTF8String, r::Range1{Int})
-    i = isvalid(s,first(r)) ? first(r) : nextind(s,first(r))
-    j = nextind(s,last(r))-1
+    a, b = first(r), last(r)
+    i = isvalid(s,a) ? a : nextind(s,a)
+    j = b < endof(s) ? nextind(s,b)-1 : endof(s.data)
     UTF8String(s.data[i:j])
 end
 
@@ -94,7 +95,7 @@ strcat(a::ByteString, b::ByteString, c::ByteString...) =
     UTF8String([a.data,b.data,map(s->s.data,c)...])
 
 transform_to_utf8(s::String, f::Function) =
-    sprint(length(s), io->for c in s; write(io,f(c)::Char); end)
+    sprint(endof(s), io->for c in s; write(io,f(c)::Char); end)
 
 uppercase(s::UTF8String) = transform_to_utf8(s, uppercase)
 lowercase(s::UTF8String) = transform_to_utf8(s, lowercase)

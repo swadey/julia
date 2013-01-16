@@ -2,7 +2,7 @@
 
 function scale!{T<:Number}(X::StridedArray{T}, s::Real)
     # FIXME: could use BLAS in more cases
-    for i in 1:numel(X)
+    for i in 1:length(X)
         X[i] *= s;
     end
     return X
@@ -33,7 +33,7 @@ diag(A::AbstractVector) = error("Perhaps you meant to use diagm().")
 
 function norm{T}(x::AbstractVector{T}, p::Number)
     if length(x) == 0
-        a = zero(eltype(x))
+        a = zero(T)
     elseif p == Inf
         a = max(abs(x))
     elseif p == -Inf
@@ -53,22 +53,20 @@ end
 norm{T<:Integer}(x::AbstractVector{T}, p::Number) = norm(float(x), p)
 norm(x::AbstractVector) = norm(x, 2)
 
-function norm(A::AbstractMatrix, p)
+function norm(A::AbstractMatrix, p::Number)
     m, n = size(A)
     if m == 0 || n == 0
         a = zero(eltype(A))
     elseif m == 1 || n == 1
-        a = norm(reshape(A, numel(A)), p)
+        a = norm(reshape(A, length(A)), p)
     elseif p == 1
         a = max(sum(abs(A),1))
     elseif p == 2
         a = max(svdvals(A))
     elseif p == Inf
         a = max(sum(abs(A),2))
-    elseif p == :fro
-        a = norm(reshape(A, numel(A)))
     else
-        error("invalid parameter to matrix norm")
+        error("invalid parameter p given to compute matrix norm")
     end
     return float(a)
 end
@@ -78,12 +76,15 @@ norm(A::AbstractMatrix) = norm(A, 2)
 norm(x::Number) = abs(x)
 norm(x::Number, p) = abs(x)
 
+normfro(A::AbstractMatrix) = norm(reshape(A, length(A)), 2)
+normfro(x::Number) = abs(x)
+
 rank(A::AbstractMatrix, tol::Real) = sum(svdvals(A) .> tol)
 function rank(A::AbstractMatrix)
     m,n = size(A)
     if m == 0 || n == 0; return 0; end
     sv = svdvals(A)
-    sum(sv .> max(size(A,1),size(A,2))*eps(sv[1]))
+    sum(sv .> max(size(A))*eps(sv[1]))
 end
 rank(x::Number) = x == 0 ? 0 : 1
 

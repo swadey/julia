@@ -52,6 +52,15 @@ extern "C" const char *jl_lookup_soname(char *pfx, size_t n)
 // map from user-specified lib names to handles
 static std::map<std::string, void*> libMap;
 
+int add_library_mapping(char *lib, void *hnd)
+{
+    if(libMap[lib] == NULL && hnd != NULL) {
+        libMap[lib] = hnd;
+        return 0;
+    } else
+        return -1;
+}
+
 static void *add_library_sym(char *name, char *lib)
 {
     void *hnd;
@@ -260,6 +269,8 @@ static Value *julia_to_native(Type *ty, jl_value_t *jt, Value *jv,
                               false);
 }
 
+static jl_value_t *jl_signed_type=NULL;
+
 // --- code generator for ccall itself ---
 
 // ccall(pointer, rettype, (argtypes...), args...)
@@ -303,24 +314,8 @@ static Value *emit_ccall(jl_value_t **args, size_t nargs, jl_codectx_t *ctx)
         if (f_name != NULL) {
             // just symbol, default to JuliaDLHandle
 #ifdef __WIN32__
-            fptr = jl_dlsym_e(jl_dl_handle, f_name);
-            if (!fptr) {
-                //TODO: when one of these succeeds, store the f_lib name (and clear fptr)
-                fptr = jl_dlsym_e(jl_kernel32_handle, f_name);
-                if (!fptr) {
-                    fptr = jl_dlsym_e(jl_ntdll_handle, f_name);
-                    if (!fptr) {
-                        fptr = jl_dlsym_e(jl_crtdll_handle, f_name);
-                        if (!fptr) {
-                            fptr = jl_dlsym(jl_winsock_handle, f_name);
-                        }
-                    }
-                }
-            }
-            else {
-                // available in process symbol table
-                fptr = NULL;
-            }
+         //TODO: store the f_lib name instead of fptr
+        fptr = jl_dlsym_win32(f_name);
 #else
             // will look in process symbol table
 #endif
@@ -368,11 +363,40 @@ static Value *emit_ccall(jl_value_t **args, size_t nargs, jl_codectx_t *ctx)
     size_t i;
     bool haspointers = false;
     bool isVa = false;
-    for(i=0; i < jl_tuple_len(tt); i++) {
+    size_t nargt = jl_tuple_len(tt);
+    std::vector<AttributeWithIndex> attrs;
+
+    for(i=0; i < nargt; i++) {
         jl_value_t *tti = jl_tupleref(tt,i);
         if (jl_is_seq_type(tti)) {
             isVa = true;
             tti = jl_tparam0(tti);
+        }
+        if (jl_is_bits_type(tti)) {
+            // see pull req #978. need to annotate signext/zeroext for
+            // small integer arguments.
+            jl_bits_type_t *bt = (jl_bits_type_t*)tti;
+            if (bt->nbits < 32) {
+                if (jl_signed_type == NULL) {
+                    jl_signed_type = jl_get_global(jl_core_module,jl_symbol("Signed"));
+                }
+#ifdef LLVM32
+                Attributes::AttrVal av;
+                if (jl_signed_type && jl_subtype(tti, jl_signed_type, 0))
+                    av = Attributes::SExt;
+                else
+                    av = Attributes::ZExt;
+                attrs.push_back(AttributeWithIndex::get(getGlobalContext(), i+1,
+                                                        ArrayRef<Attributes::AttrVal>(&av, 1)));
+#else
+                Attribute::AttrConst av;
+                if (jl_signed_type && jl_subtype(tti, jl_signed_type, 0))
+                    av = Attribute::SExt;
+                else
+                    av = Attribute::ZExt;
+                attrs.push_back(AttributeWithIndex::get(i+1, av));
+#endif
+            }
         }
         Type *t = julia_type_to_llvm(tti);
         if (t == NULL) {
@@ -525,6 +549,11 @@ static Value *emit_ccall(jl_value_t **args, size_t nargs, jl_codectx_t *ctx)
     if (cc != CallingConv::C)
         ((CallInst*)result)->setCallingConv(cc);
 
+#ifdef LLVM32
+    ((CallInst*)result)->setAttributes(AttrListPtr::get(getGlobalContext(), ArrayRef<AttributeWithIndex>(attrs)));
+#else
+    ((CallInst*)result)->setAttributes(AttrListPtr::get(attrs.data(),attrs.size()));
+#endif
     // restore temp argument area stack pointer
     if (haspointers) {
         assert(saveloc != NULL);

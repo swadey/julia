@@ -7,7 +7,7 @@
 
 ## required core functionality ##
 
-length(s::ASCIIString) = length(s.data)
+endof(s::ASCIIString) = length(s.data)
 ref(s::ASCIIString, i::Int) = (x=s.data[i]; x < 0x80 ? char(x) : '\ufffd')
 
 ## overload methods for efficiency ##
@@ -69,7 +69,7 @@ end
 
 ## outputing ASCII strings ##
 
-print(io::IO, s::ASCIIString) = (write(io, s.data);nothing)
+print(io::IO, s::ASCIIString) = (write(io, s);nothing)
 write(io::IO, s::ASCIIString) = write(io, s.data)
 
 ## transcoding to ASCII ##

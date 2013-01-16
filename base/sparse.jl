@@ -97,7 +97,7 @@ function reinterpret{T,Tv,Ti,N}(::Type{T}, a::SparseMatrixCSC{Tv,Ti}, dims::NTup
     if sizeof(T) != sizeof(Tv)
         error("SparseMatrixCSC reinterpret is only supported for element types of the same size")
     end
-    if prod(dims) != numel(a)
+    if prod(dims) != length(a)
         error("reinterpret: invalid dimensions")
     end
     mS,nS = dims
@@ -113,7 +113,7 @@ function reinterpret{T,Tv,Ti,N}(::Type{T}, a::SparseMatrixCSC{Tv,Ti}, dims::NTup
 end
 
 function reshape{Tv,Ti}(a::SparseMatrixCSC{Tv,Ti}, dims::NTuple{2,Int})
-    if prod(dims) != numel(a)
+    if prod(dims) != length(a)
         error("reshape: invalid dimensions")
     end
     mS,nS = dims
@@ -172,7 +172,7 @@ function dense{Tv}(S::SparseMatrixCSC{Tv})
 end
 
 function sparse(a::Vector)
-    n = numel(a)
+    n = length(a)
     I = find(a)
     J = ones(Int, n)
     V = nonzeros(a)
@@ -615,8 +615,8 @@ for op in (:+, :-, :.*, :.^)
                 colptrS[col+1] = ptrS
             end
 
-            rowvalS = del(rowvalS, colptrS[end]:length(rowvalS))
-            nzvalCS = del(nzvalS, colptrS[end]:length(nzvalS))
+            delete!(rowvalS, colptrS[end]:length(rowvalS))
+            delete!(nzvalS, colptrS[end]:length(nzvalS))
             return SparseMatrixCSC(m, n, colptrS, rowvalS, nzvalS)
         end
 
@@ -1045,8 +1045,8 @@ function assign{T,Ti}(A::SparseMatrixCSC{T,Ti}, v, i0::Integer, i1::Integer)
             end
         end
         if loc != -1
-            del(A.rowval, loc)
-            del(A.nzval, loc)
+            delete!(A.rowval, loc)
+            delete!(A.nzval, loc)
             for j = (i1+1):(A.n+1)
                 A.colptr[j] = A.colptr[j] - 1
             end
@@ -1120,8 +1120,8 @@ function assign{T,Ti}(A::SparseMatrixCSC{T,Ti}, v, i0::Integer, i1::Integer)
     else #last < first to begin with
         i = first
     end
-    insert(A.rowval, i, i0)
-    insert(A.nzval, i, v)
+    insert!(A.rowval, i, i0)
+    insert!(A.nzval, i, v)
     for j = (i1+1):(A.n+1)
         A.colptr[j] = A.colptr[j] + 1
     end
@@ -1246,9 +1246,12 @@ function assign{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, B::SparseMatrixCSC{Tv,Ti}, I::
         colB += 1
     end
 
+    delete!(rowvalS, colptrS[end]:length(rowvalS))
+    delete!(nzvalS, colptrS[end]:length(nzvalS))
+
     A.colptr = colptrS
-    A.rowval = del(rowvalS, colptrS[end]:length(rowvalS))
-    A.nzval  = del(nzvalS, colptrS[end]:length(nzvalS))
+    A.rowval = rowvalS
+    A.nzval = nzvalS
     return A
 end
 
@@ -1410,8 +1413,8 @@ function fkeep!{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, f, other)
     A.colptr[A.n + 1] = nz
     nz -= 1
     if nz < nzorig
-        grow(A.nzval, nz - nzorig)
-        grow(A.rowval, nz - nzorig)
+        grow!(A.nzval, nz - nzorig)
+        grow!(A.rowval, nz - nzorig)
     end
     A
 end

@@ -4,18 +4,18 @@ time() = ccall(:clock_now, Float64, ())
 
 function tic()
     t0 = time()
-    tls(:TIMERS, (t0, get(tls(), :TIMERS, ())))
+    task_local_storage(:TIMERS, (t0, get(task_local_storage(), :TIMERS, ())))
     return t0
 end
 
 function toq()
     t1 = time()
-    timers = get(tls(), :TIMERS, ())
+    timers = get(task_local_storage(), :TIMERS, ())
     if is(timers,())
         error("toc() without tic()")
     end
     t0 = timers[1]
-    tls(:TIMERS, timers[2])
+    task_local_storage(:TIMERS, timers[2])
     t1-t0
 end
 
@@ -94,8 +94,8 @@ function whicht(f, types)
             d = f.env.defs
             while !is(d,())
                 if is(d.func.code, lsd)
-                    print(stdout_stream, f.env.name)
-                    show(stdout_stream, d); println(stdout_stream)
+                    print(OUTPUT_STREAM, f.env.name)
+                    show(OUTPUT_STREAM, d); println(OUTPUT_STREAM)
                     return
                 end
                 d = d.next
@@ -107,18 +107,18 @@ end
 which(f, args...) = whicht(f, map(a->(isa(a,Type) ? Type{a} : typeof(a)), args))
 
 edit(file::String) = edit(file, 1)
-function edit(file::String, line::Int)
+function edit(file::String, line::Integer)
     editor = get(ENV, "JULIA_EDITOR", "emacs")
     issrc = file[end-2:end] == ".jl"
     if issrc
         if file[1]!='/' && !is_file_readable(file)
-            file2 = "$JULIA_HOME/base/$file"
+            file2 = "$JULIA_HOME/../lib/julia/base/$file"
             if is_file_readable(file2)
                 file = file2
             end
         end
         if editor == "emacs"
-            jmode = "$JULIA_HOME/contrib/julia-mode.el"
+            jmode = "$JULIA_HOME/../../contrib/julia-mode.el"
             run(`emacs $file --eval "(progn
                                      (require 'julia-mode \"$jmode\")
                                      (julia-mode)
@@ -149,7 +149,7 @@ function edit(file::String, line::Int)
 end
 edit(file::String) = edit(file, 1)
 
-function less(file::String, line::Int)
+function less(file::String, line::Integer)
     pager = get(ENV, "PAGER", "less")
     run(`$pager +$(line)g $file`)
 end
@@ -239,30 +239,48 @@ end
 
 include_string(txt::ByteString) = ccall(:jl_load_file_string, Void, (Ptr{Uint8},), txt)
 
-function include_from_node1(path)
-    if myid()==1
-        Core.include(path)
-    else
-        include_string(remote_call_fetch(1, readall, path))
-    end
-end
+source_path() = get(task_local_storage(), :SOURCE_PATH, "")
 
-function reload_path(path)
-    had = has(package_list, path)
-    package_list[path] = time()
+function include_from_node1(path)
+    tls = task_local_storage()
+    prev = get(tls, :SOURCE_PATH, nothing)
+    path = (prev == nothing) ? abspath(path) : joinpath(dirname(prev),path)
+    tls[:SOURCE_PATH] = path
     try
-        eval(Main, :(Base.include_from_node1($path)))
-    catch e
-        if !had
-            del(package_list, path)
+        if myid()==1
+            Core.include(path)
+        else
+            include_string(remote_call_fetch(1, readall, path))
         end
-        rethrow(e)
+    finally
+        if prev == nothing
+            delete!(tls, :SOURCE_PATH)
+        else
+            tls[:SOURCE_PATH] = prev
+        end
     end
     nothing
 end
 
-# deprecated
-const load = require
+function reload_path(path)
+    tls = task_local_storage()
+    had = has(package_list, path)
+    package_list[path] = time()
+    prev = delete!(tls, :SOURCE_PATH, nothing)
+    try
+        eval(Main, :(Base.include_from_node1($path)))
+    catch e
+        if !had
+            delete!(package_list, path)
+        end
+        rethrow(e)
+    finally
+        if prev != nothing
+            tls[:SOURCE_PATH] = prev
+        end
+    end
+    nothing
+end
 
 evalfile(fname::String) = eval(Main, parse(readall(fname))[1])
 
@@ -297,7 +315,7 @@ function init_help()
         help_function_dict = Dict()
         for (cat,mod,func,desc) in helpdb
             if !has(help_category_dict, cat)
-                push(help_category_list, cat)
+                push!(help_category_list, cat)
                 help_category_dict[cat] = {}
             end
             if !isempty(mod)
@@ -310,20 +328,21 @@ function init_help()
             else
                 mfunc = func
             end
-            push(help_category_dict[cat], mfunc)
+            push!(help_category_dict[cat], mfunc)
             if !has(help_function_dict, mfunc)
                 help_function_dict[mfunc] = {}
             end
-            push(help_function_dict[mfunc], desc)
+            push!(help_function_dict[mfunc], desc)
             if !has(help_module_dict, func)
                 help_module_dict[func] = {}
             end
             if !contains(help_module_dict[func], mod)
-                push(help_module_dict[func], mod)
+                push!(help_module_dict[func], mod)
             end
         end
     end
 end
+
 
 function help()
     init_help()

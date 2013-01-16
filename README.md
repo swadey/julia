@@ -10,6 +10,8 @@
     |__/                   |
 
 
+[![Build Status](https://api.travis-ci.org/JuliaLang/julia.png?branch=master)](https://travis-ci.org/JuliaLang/julia)
+
 <a name="The-Julia-Language"/>
 ## The Julia Language
 
@@ -21,7 +23,7 @@ This is the GitHub repository of Julia source code, including instructions for c
 
 - **Homepage:** <http://julialang.org>
 - **Binaries:** <http://code.google.com/p/julialang/downloads/list>
-- **Packages:** <https://github.com/JuliaLang/METADATA.jl>
+- **Packages:** <http://docs.julialang.org/en/latest/packages/packagelist/>
 - **Mailing lists:** <http://julialang.org/mailing_lists>
 - **IRC:** <http://webchat.freenode.net/?channels=julia>
 - **Source code:** <https://github.com/JuliaLang/julia>
@@ -39,8 +41,9 @@ developers may find the notes in [CONTRIBUTING](https://github.com/JuliaLang/jul
 - **GNU/Linux**
 - **Darwin/OS X**
 - **FreeBSD**
+- **Windows**
 
-All systems are supported with both x86/64 (64-bit) and x86 (32-bit) architectures. [Julia has been ported to Windows](https://github.com/loladiro/julia) as well, and Windows support will be merged into the julia mainline once it stabilizes.
+All systems are supported with both x86/64 (64-bit) and x86 (32-bit) architectures. 
 
 <a name="Source-Download-Compilation"/>
 ## Source Download & Compilation
@@ -201,7 +204,7 @@ SuiteSparse is a special case, since it is typically only installed as a static 
 <a name="Binary-Installation"/>
 ## Binary Installation
 
-Because of the rapid pace of development at this point, we recommend installing the latest Julia from source, but platform-specific tarballs with pre-compiled binaries are also [available for download](https://github.com/JuliaLang/julia/downloads).
+Because of the rapid pace of development at this point, we recommend installing the latest Julia from source, but platform-specific tarballs with pre-compiled binaries are also [available for download](http://code.google.com/p/julialang/downloads/list).
 
 You can either run the `julia` executable using its full path in the directory created above, or add that directory to your executable path so that you can run the julia program from anywhere (in the current shell session):
 

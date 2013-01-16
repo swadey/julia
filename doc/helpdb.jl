@@ -1030,19 +1030,19 @@ collection[key...] = value
 
 "),
 
-(E"I/O",E"Base",E"stdout_stream",E"stdout_stream
+(E"I/O",E"Base",E"STDOUT",E"STDOUT
 
    Global variable referring to the standard out stream.
 
 "),
 
-(E"I/O",E"Base",E"stderr_stream",E"stderr_stream
+(E"I/O",E"Base",E"STDERR",E"STDERR
 
    Global variable referring to the standard error stream.
 
 "),
 
-(E"I/O",E"Base",E"stdin_stream",E"stdin_stream
+(E"I/O",E"Base",E"STDIN",E"STDIN
 
    Global variable referring to the standard input stream.
 
@@ -2303,12 +2303,6 @@ airyaiprime(x)
 
    Generate an array of random integers in the interval from \"a\" to
    \"b\" inclusive. The first argument is a tuple.
-
-"),
-
-(E"Random Numbers",E"Base",E"randbit",E"randbit()
-
-   Generate \"1\" or \"0\" at random
 
 "),
 

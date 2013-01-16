@@ -4,7 +4,7 @@ unicodedir = mktempdir()
 # Use perl to generate the primary data
 primary_encoding = "UTF-32BE"
 primary_path = joinpath(unicodedir, primary_encoding*".unicode")
-run(`perl -e 'print pack "N*", 0xfeff, 0..0xd7ff, 0xe000..0x10ffff' ` > primary_path)
+run(`perl -e 'print pack "N*", 0xfeff, 0..0xd7ff, 0xe000..0x10ffff' ` > primary_path )
 
 # Use iconv to generate the other data
 for encoding in ["UTF-32LE", "UTF-16BE", "UTF-16LE", "UTF-8"]

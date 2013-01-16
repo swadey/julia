@@ -7,19 +7,20 @@ default: release
 DIRS = $(BUILD)/bin $(BUILD)/lib $(BUILD)/$(JL_PRIVATE_LIBDIR) $(BUILD)/share/julia
 
 $(foreach dir,$(DIRS),$(eval $(call dir_target,$(dir))))
-$(foreach link,extras base test doc examples,$(eval $(call symlink_target,$(link),$(BUILD)/share/julia)))
+$(foreach link,extras base test doc examples ui,$(eval $(call symlink_target,$(link),$(BUILD)/share/julia)))
 
 QUIET_MAKE =
 ifeq ($(USE_QUIET), 1)
 QUIET_MAKE = -s
 endif
 
-debug release: | $(DIRS) $(BUILD)/share/julia/extras $(BUILD)/share/julia/base $(BUILD)/share/julia/test $(BUILD)/share/julia/doc $(BUILD)/share/julia/examples
+debug release: | $(DIRS) $(BUILD)/share/julia/extras $(BUILD)/share/julia/base $(BUILD)/share/julia/test $(BUILD)/share/julia/doc $(BUILD)/share/julia/examples $(BUILD)/share/julia/ui
 	@$(MAKE) $(QUIET_MAKE) julia-$@
 	@export JL_PRIVATE_LIBDIR=$(JL_PRIVATE_LIBDIR) && \
-	$(MAKE) $(QUIET_MAKE) LD_LIBRARY_PATH=$(BUILD)/lib:$(LD_LIBRARY_PATH) JULIA_EXECUTABLE=$(JULIA_EXECUTABLE_$@) $(BUILD)/$(JL_PRIVATE_LIBDIR)/sys.ji
+	$(MAKE) $(QUIET_MAKE) LD_LIBRARY_PATH=$(BUILD)/lib:$(LD_LIBRARY_PATH) JULIA_EXECUTABLE="$(JULIA_EXECUTABLE_$@)" $(BUILD)/$(JL_PRIVATE_LIBDIR)/sys.ji
 
 julia-debug julia-release:
+	@-git submodule init --quiet
 	@-git submodule update
 	@$(MAKE) $(QUIET_MAKE) -C deps
 	@$(MAKE) $(QUIET_MAKE) -C src lib$@
@@ -32,9 +33,14 @@ $(BUILD)/share/julia/helpdb.jl: doc/helpdb.jl | $(BUILD)/share/julia
 	@cp $< $@
 
 # use sys.ji if it exists, otherwise run two stages
-$(BUILD)/$(JL_PRIVATE_LIBDIR)/sys.ji: VERSION base/*.jl $(BUILD)/share/julia/helpdb.jl
+$(BUILD)/$(JL_PRIVATE_LIBDIR)/sys.ji: VERSION base/*.jl base/pkg/*.jl $(BUILD)/share/julia/helpdb.jl
 	$(QUIET_JULIA) cd base && \
 	(test -f $(BUILD)/$(JL_PRIVATE_LIBDIR)/sys.ji || $(JULIA_EXECUTABLE) -bf sysimg.jl) && $(JULIA_EXECUTABLE) -f sysimg.jl || echo "Note: this error is usually fixed by running 'make cleanall'."
+
+run-julia-debug run-julia-release: run-julia-%:
+	$(MAKE) $(QUIET_MAKE) run-julia JULIA_EXECUTABLE="$(JULIA_EXECUTABLE_$*)"
+run-julia:
+	$(JULIA_EXECUTABLE)
 
 # public libraries, that are installed in $(PREFIX)/lib
 JL_LIBS = julia-release julia-debug
@@ -47,7 +53,8 @@ JL_PRIVATE_LIBS = amd arpack cholmod colamd fftw3 fftw3f fftw3_threads \
 		  tk_wrapper umfpack z openblas
 
 PREFIX ?= julia-$(JULIA_COMMIT)
-install: release
+install: release webrepl
+	@-$(MAKE) $(QUIET_MAKE) tk
 	@for subdir in "sbin" "bin" "etc" $(JL_LIBDIR) $(JL_PRIVATE_LIBDIR) "share/julia" ; do \
 		mkdir -p $(PREFIX)/$$subdir ; \
 	done
@@ -60,32 +67,45 @@ install: release
 		cp -a $(BUILD)/lib/lib$${suffix}*.$(SHLIB_EXT)* $(PREFIX)/$(JL_PRIVATE_LIBDIR) ; \
 	done
 	# Copy system image
+ifneq ($(OS), WINNT)
 	cp $(BUILD)/$(JL_PRIVATE_LIBDIR)/sys.ji $(PREFIX)/$(JL_PRIVATE_LIBDIR)
+endif
 	# Copy in all .jl sources as well
 	-cp -R -L $(BUILD)/share/julia $(PREFIX)/share/
+	-cp $(BUILD)/etc/nginx.conf $(PREFIX)/etc/
 ifeq ($(OS), WINNT)
-	-cp dist/windows/* $(PREFIX)
+	-cp $(JULIAHOME)/contrib/windows/* $(PREFIX)
+	-cp -R $(BUILD)/sbin $(PREFIX)
+	[ -e dist-extras/7za.exe ] && cp dist-extras/7za.exe $(PREFIX)/bin/7z.exe
+	[ -e dist-extras/PortableGit-1.8.0-preview20121022.7z ] && \
+	  mkdir $(PREFIX)/Git && \
+	  7z x dist-extras/PortableGit-1.8.0-preview20121022.7z -o"$(PREFIX)/Git"
 ifeq ($(shell uname),MINGW32_NT-6.1)
 	-for dllname in "libgfortran-3" "libquadmath-0" "libgcc_s_dw2-1" "libstdc++-6,pthreadgc2" ; do \
 		cp /mingw/bin/$${dllname}.dll $(PREFIX)/$(JL_LIBDIR) ; \
 	done
 else
-	@echo 'Warning: system libraries "libgfortran-3" "libquadmath-0" "libgcc_s_dw2-1" "libstdc++-6,pthreadgc2" not included in install'
+	-for dllname in "libgfortran-3" "libquadmath-0" "libgcc_s_sjlj-1" "libstdc++-6" ; do \
+		cp /usr/lib/gcc/i686-w64-mingw32/4.6/$${dllname}.dll $(PREFIX)/$(JL_LIBDIR) ; \
+	done
 endif
 endif
+	cp $(JULIAHOME)/VERSION $(PREFIX)/share/julia/VERSION
+	echo `git rev-parse --short HEAD`-$(OS)-$(ARCH) \(`date +"%Y-%m-%d %H:%M:%S"`\) > $(PREFIX)/share/julia/COMMIT
 
-dist: cleanall
+dist: 
 	rm -fr julia-*.tar.gz julia-$(JULIA_COMMIT)
-	-$(MAKE) -C deps clean-openblas
+#	-$(MAKE) -C deps clean-openblas
 	$(MAKE) install OPENBLAS_DYNAMIC_ARCH=1
 ifeq ($(OS), Darwin)
 	-./contrib/fixup-libgfortran.sh $(PREFIX)/$(JL_PRIVATE_LIBDIR)
 endif
+ifeq ($(OS), WINNT)
+	zip -r -9 julia-$(JULIA_COMMIT)-$(OS)-$(ARCH).zip julia-$(JULIA_COMMIT)
+else
 	tar zcvf julia-$(JULIA_COMMIT)-$(OS)-$(ARCH).tar.gz julia-$(JULIA_COMMIT)
+endif
 	rm -fr julia-$(JULIA_COMMIT)
-
-h2j: $(BUILD)/$(JL_LIBDIR)/libLLVM*.a $(BUILD)/$(JL_LIBDIR)/libclang*.a src/h2j.cpp
-	$(QUIET_CC) g++ -O2 -fno-rtti -D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS -Iinclude $^ -o $@
 
 clean: | $(CLEAN_TARGETS)
 	@$(MAKE) -C base clean
@@ -107,7 +127,8 @@ cleanall: clean
 #	@$(MAKE) -C deps clean-uv
 
 .PHONY: default debug release julia-debug julia-release \
-	test testall test-* clean cleanall
+	test testall test-* clean cleanall webrepl \
+	run-julia run-julia-debug run-julia-release
 
 test: release
 	@$(MAKE) $(QUIET_MAKE) -C test default
@@ -118,7 +139,17 @@ testall: release
 test-%: release
 	@$(MAKE) $(QUIET_MAKE) -C test $*
 
-webrepl:
-	make -C deps install-lighttpd
-	make -C ui/webserver
-	cd $(BUILD)/share/julia && ln -sf ../../../ui/website .
+webrepl: all
+	@$(MAKE) $(QUIET_MAKE) -C deps install-nginx
+	@$(MAKE) -C ui/webserver julia-release
+
+tk:
+	@$(MAKE) -C deps install-tk-wrapper
+
+# download target for some hardcoded windows dependencies
+.PHONY: win-extras
+win-extras:
+	cd dist-extras && \
+	wget http://downloads.sourceforge.net/sevenzip/7za920.zip && \
+	wget https://msysgit.googlecode.com/files/PortableGit-1.8.0-preview20121022.7z
+

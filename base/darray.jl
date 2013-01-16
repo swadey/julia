@@ -221,9 +221,9 @@ function locate(d::DArray, I::Range1{Int})
         if i >= d.dist[j+1]
             j += 1
         else
-            push(pmap,j)
+            push!(pmap,j)
             i = min(imax+1,d.dist[j+1])
-            push(dist,i)
+            push!(dist,i)
             j += 1
         end
     end
@@ -246,9 +246,9 @@ function locate(d::DArray, I::AbstractVector{Int})
         if i >= d.dist[j+1]
             j += 1
         else
-            push(pmap,j)
+            push!(pmap,j)
             i = min(imax+1,d.dist[j+1])
-            push(dist,i)
+            push!(dist,i)
             j += 1
         end
     end
@@ -402,7 +402,7 @@ function da_reshape(T, sz, da, A)
 end
 
 function reshape(A::DArray, dims::Dims)
-    if prod(dims) != numel(A)
+    if prod(dims) != length(A)
         error("reshape: invalid dimensions")
     end
     darray((T,sz,da)->da_reshape(T,sz,da,A),

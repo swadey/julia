@@ -1380,10 +1380,6 @@ Random numbers are generated in Julia by calling functions from the `Mersenne Tw
 
    Generate an array of random integers in the interval from ``a`` to ``b`` inclusive. The first argument is a tuple.
 
-.. function:: randbit
-
-   Generate ``1`` or ``0`` at random
-
 .. function:: randbool
 
    Generate a random boolean value
@@ -1723,9 +1719,13 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
    Returns the eigenvalues of ``A``.
 
-.. function:: svd(A) -> U, S, V'
+.. function:: svd(A) -> U, S, V
 
-   Compute the SVD of A
+   Compute the SVD of A, returning ``U``, ``S``, and ``V`` such that ``A = U*S*V'``.
+
+.. function:: svdt(A) -> U, S, Vt
+
+   Compute the SVD of A, returning ``U``, ``S``, and ``Vt`` such that ``A = U*S*Vt``.
 
 .. function:: svdvals(A)
 
@@ -1761,11 +1761,15 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
 .. function:: norm(A, [p])
 
-   Compute the p-norm of a vector or a matrix. ``p`` is ``2`` by default, if not provided. If ``A`` is a matrix, valid values for ``p`` are ``1``, ``2``, ``Inf``, or ``:fro`` (Frobenius norm).
+   Compute the ``p``-norm of a vector or a matrix. ``p`` is ``2`` by default, if not provided. If ``A`` is a vector, ``norm(A, p)`` computes the ``p``-norm. ``norm(A, Inf)`` returns the largest value in ``abs(A)``, whereas ``norm(A, -Inf)`` returns the smallest. If ``A`` is a matrix, valid values for ``p`` are ``1``, ``2``, or ``Inf``. In order to compute the Frobenius norm, use ``normfro``.
+
+.. function:: normfro(A)
+
+   Compute the Frobenius norm of a matrix ``A``.
 
 .. function:: cond(M, [p])
 
-   Matrix condition number, computed using the p-norm. ``p`` is 2 by default, if not provided. Valid values for ``p`` are ``1``, ``2``, ``Inf``, or ``:fro`` (Frobenius norm).
+   Matrix condition number, computed using the p-norm. ``p`` is 2 by default, if not provided. Valid values for ``p`` are ``1``, ``2``, or ``Inf``.
 
 .. function:: trace(M)
 
@@ -2194,11 +2198,15 @@ Parallel Computing
 
 .. function:: nprocs()
 
-   Get the number of available processors
+   Get the number of available processors.
 
 .. function:: myid()
 
-   Get the id of the current processor
+   Get the id of the current processor.
+
+.. function:: pmap(f, c)
+
+   Transform collection ``c`` by applying ``f`` to each element in parallel.
 
 .. function:: remote_call(id, func, args...)
 

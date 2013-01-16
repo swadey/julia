@@ -172,10 +172,11 @@ for (fname, elty) in ((:dsyrk_,:Float64), (:ssyrk_,:Float32),
            n = size(A, trans == 'N' ? 1 : 2)
            k = size(A, trans == 'N' ? 2 : 1)
            C = Array($elty, (n, n)) 
+           z = zero($elty)
            ccall(($(string(fname)),libblas), Void,
                  (Ptr{Uint8}, Ptr{Uint8}, Ptr{BlasInt}, Ptr{BlasInt}, Ptr{$elty},
                   Ptr{$elty}, Ptr{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ptr{BlasInt}),
-                 &uplo, &trans, &n, &k, &alpha, A, &stride(A,2), &0., C, &stride(C,2))
+                 &uplo, &trans, &n, &k, &alpha, A, &stride(A,2), &z, C, &stride(C,2))
            C
        end
    end
@@ -352,13 +353,9 @@ for (fname, elty) in ((:dgemv_,:Float64), (:sgemv_,:Float32),
                  X, &stride(X,1), &beta, Y, &stride(Y,1))
            Y
        end
-       function gemv!(trans::BlasChar, alpha::($elty), A::StridedMatrix{$elty}, X::StridedVector{$elty})
+       function gemv(trans::BlasChar, alpha::($elty), A::StridedMatrix{$elty}, X::StridedVector{$elty})
            Y = Array($elty, size(A,1))
-           ccall(($(string(fname)),libblas), Void,
-                 (Ptr{Uint8}, Ptr{BlasInt}, Ptr{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ptr{BlasInt},
-                  Ptr{$elty}, Ptr{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ptr{BlasInt}),
-                 &trans, &size(A,1), &size(A,2), &alpha, A, &stride(A,2),
-                 X, &stride(X,1), &0., Y, &1)
+           gemv!(trans, alpha, A, X, zero($elty), Y)
            Y
        end
    end
@@ -436,8 +433,8 @@ function copy_to{T<:BlasFloat}(dest::Ptr{T}, src::Ptr{T}, n::Integer)
 end
 
 function copy_to{T<:BlasFloat}(dest::Array{T}, src::Array{T})
-    n = numel(src)
-    if n > numel(dest); throw(BoundsError()); end
+    n = length(src)
+    if n > length(dest); throw(BoundsError()); end
     copy_to(pointer(dest), pointer(src), n)
     return dest
 end

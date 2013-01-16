@@ -69,8 +69,7 @@ export
   Z_DEFAULT_BUFSIZE,
   Z_BIG_BUFSIZE
 
-#load("zlib_h")
-include("$JULIA_HOME/../share/julia/extras/zlib_h.jl")
+include("zlib_h.jl")
 
 # Expected line length for strings
 const GZ_LINE_BUFSIZE = 256
@@ -343,7 +342,7 @@ end
 # Mimics read(s::IOStream, a::Array{T})
 function read{T<:Union(Int8,Uint8,Int16,Uint16,Int32,Uint32,Int64,Uint64,
                        Int128,Uint128,Float32,Float64,Complex64,Complex128)}(s::GZipStream, a::Array{T})
-    nb = numel(a)*sizeof(T)
+    nb = length(a)*sizeof(T)
     # Note: this will overflow and succeed without warning if nb > 4GB
     ret = ccall((:gzread, _zlib), Int32,
                 (Ptr{Void}, Ptr{Void}, Uint32), s.gz_file, a, nb)
@@ -390,13 +389,13 @@ function readall(s::GZipStream, bufsize::Int)
 
             # Resize buffer to exact length
             if length(buf) > len
-                grow(buf, len-length(buf))
+                grow!(buf, len-length(buf))
             end
             return bytestring(buf)
         end
         len += ret
         # Grow the buffer so that bufsize bytes will fit
-        grow(buf, bufsize-(length(buf)-len))
+        grow!(buf, bufsize-(length(buf)-len))
     end
 end
 readall(s::GZipStream) = readall(s, Z_BIG_BUFSIZE)
@@ -424,13 +423,13 @@ function readuntil(s::GZipStream, c::Uint8)
 
         # Grow the buffer so that there's room for GZ_LINE_BUFSIZE chars
         add_len = GZ_LINE_BUFSIZE - (length(buf)-eos+1)
-        grow(buf, add_len)
+        grow!(buf, add_len)
         pos = eos
 
         # Read in the next chunk
         if gzgets(s, pointer(buf)+pos-1, GZ_LINE_BUFSIZE) == C_NULL
             # eof(s); remove extra buffer space
-            grow(buf, -GZ_LINE_BUFSIZE)
+            grow!(buf, -GZ_LINE_BUFSIZE)
             return buf
         end
     end
@@ -440,7 +439,7 @@ write(s::GZipStream, b::Uint8) = gzputc(s, b)
 
 function write{T}(s::GZipStream, a::Array{T})
     if isa(T,BitsKind)
-        return gzwrite(s, pointer(a), numel(a)*sizeof(T))
+        return gzwrite(s, pointer(a), length(a)*sizeof(T))
     else
         invoke(write, (Any, Array), s, a)
     end

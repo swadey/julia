@@ -5,22 +5,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <sys/mman.h>
+//#include <sys/mman.h>
 #include <signal.h>
 #include <libgen.h>
 #include <unistd.h>
 #include <errno.h>
 #include "julia.h"
 #include "builtin_proto.h"
-#if defined(__APPLE__)
-#include <execinfo.h>
-#elif defined(__WIN32__)
-#include <Winbase.h>
+#if defined(__WIN32__)
+#include <winbase.h>
 #include <malloc.h>
 #else
 // This gives unwind only local unwinding options ==> faster code
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
+#include <dlfcn.h>   // for dladdr
 #endif
 
 /* This probing code is derived from Douglas Jones' user thread library */
@@ -206,7 +205,7 @@ static void ctx_switch(jl_task_t *t, jl_jmp_buf *where)
     /*
       making task switching interrupt-safe is going to be challenging.
       we need JL_SIGATOMIC_BEGIN in jl_enter_handler, and then
-      JL_SIGATOMIC_END after every JL_TRY setjmp that returns zero.
+      JL_SIGATOMIC_END after every JL_TRY sigsetjmp that returns zero.
       also protect jl_eh_restore_state.
       then we need JL_SIGATOMIC_BEGIN at the top of this function (ctx_switch).
       the JL_SIGATOMIC_END at the end of this function handles the case
@@ -413,52 +412,72 @@ static void init_task(jl_task_t *t)
 }
 #endif
 
-#if defined(__APPLE__) || defined(__WIN32__)
-#define MAX_BT_SIZE 1023
-#else
 #define MAX_BT_SIZE 80000
-#endif
 
 static ptrint_t bt_data[MAX_BT_SIZE+1];
 static size_t bt_size = 0;
 
-void getFunctionInfo(char **name, int *line, const char **filename, size_t pointer);
+void getFunctionInfo(const char **name, int *line, const char **filename, size_t pointer);
 
-static void push_frame_info_from_ip(jl_array_t *a, size_t ip)
+static int frame_info_from_ip(const char **func_name, int *line_num, const char **file_name, size_t ip, int doCframes)
 {
-    char *func_name;
+    int fromC = 0;
+
+    getFunctionInfo(func_name, line_num, file_name, ip);
+    if (*func_name == NULL && doCframes) {
+#if defined(__WIN32__)
+#else
+        Dl_info dlinfo;
+        if (dladdr((void*) ip, &dlinfo) != 0 && dlinfo.dli_sname != NULL) {
+            *func_name = dlinfo.dli_sname;
+            *file_name = dlinfo.dli_fname;
+            // line number in C looks tricky. addr2line and libbfd seem promising. For now, punt and just return address offset.
+            *line_num = ip-(size_t)dlinfo.dli_saddr;
+            fromC = 1;
+        }
+#endif
+    }
+    return fromC;
+}
+
+static void push_frame_info_from_ip(jl_array_t *a, size_t ip, int doCframes)
+{
+    const char *func_name;
     int line_num;
     const char *file_name;
+    int fromC;
     int i = jl_array_len(a);
-    getFunctionInfo(&func_name, &line_num, &file_name, ip);
+    fromC = frame_info_from_ip(&func_name, &line_num, &file_name, ip, doCframes);
     if (func_name != NULL) {
         jl_array_grow_end(a, 3);
         //ios_printf(ios_stderr, "%s at %s:%d\n", func_name, file_name, line_num);
         jl_arrayset(a, (jl_value_t*)jl_symbol(func_name), i); i++;
         jl_arrayset(a, (jl_value_t*)jl_symbol(file_name), i); i++;
-        jl_arrayset(a, jl_box_long(line_num), i);
+        if (fromC)
+            jl_arrayset(a, jl_box_ulong(line_num), i); // while offset, not line #
+        else
+            jl_arrayset(a, jl_box_long(line_num), i);
     }
 }
 
-DLLEXPORT jl_value_t *jl_get_backtrace()
+DLLEXPORT jl_value_t *jl_parse_backtrace(ptrint_t *data, size_t n, int doCframes)
 {
     jl_array_t *a = jl_alloc_cell_1d(0);
     JL_GC_PUSH(&a);
-    for(size_t i=0; i < bt_size; i++) {
-        push_frame_info_from_ip(a, (size_t)bt_data[i]);
+    for(size_t i=0; i < n; i++) {
+        push_frame_info_from_ip(a, (size_t)data[i], doCframes);
     }
     JL_GC_POP();
     return (jl_value_t*)a;
 }
 
-#if defined(__APPLE__)
-// stacktrace using execinfo
-static void record_backtrace(void)
+DLLEXPORT jl_value_t *jl_get_backtrace()
 {
-    bt_size = backtrace((void**)bt_data, MAX_BT_SIZE);
+    return jl_parse_backtrace(bt_data, bt_size, 0);
 }
-#elif defined(__WIN32__)
-static void record_backtrace(void)
+
+#if defined(__WIN32__)
+DLLEXPORT size_t rec_backtrace(ptrint_t *data, size_t maxsize)
 {
     /** MINGW does not have the necessary declarations for linking CaptureStackBackTrace*/
 #if defined(__MINGW_H)
@@ -472,11 +491,10 @@ static void record_backtrace(void)
             FreeLibrary(kernel32);
             kernel32 = NULL;
             func = NULL;
-            bt_size = 0;
-            return;
+            return (size_t) 0;
         }
         else {
-            bt_size = func(0, MAX_BT_SIZE, bt_data, NULL);
+            return func(0, maxsize, data, NULL);
         }
     }
     else {
@@ -485,12 +503,12 @@ static void record_backtrace(void)
     }
     FreeLibrary(kernel32);
 #else
-    bt_size = RtlCaptureStackBackTrace(0, MAX_BT_SIZE, bt_data, NULL);
+    return RtlCaptureStackBackTrace(0, maxsize, data, NULL);
 #endif
 }
 #else
 // stacktrace using libunwind
-static void record_backtrace(void)
+DLLEXPORT size_t rec_backtrace(ptrint_t *data, size_t maxsize)
 {
     unw_cursor_t cursor; unw_context_t uc;
     unw_word_t ip;
@@ -498,9 +516,9 @@ static void record_backtrace(void)
     
     unw_getcontext(&uc);
     unw_init_local(&cursor, &uc);
-    while (unw_step(&cursor) && n < MAX_BT_SIZE) {
+    while (unw_step(&cursor) && n < maxsize) {
         unw_get_reg(&cursor, UNW_REG_IP, &ip);
-        bt_data[n++] = ip;
+        data[n++] = ip;
         /*
         char *func_name;
         int line_num;
@@ -510,12 +528,39 @@ static void record_backtrace(void)
             ios_printf(ios_stdout, "in %s at %s:%d\n", func_name, file_name, line_num);
         */
     }
-    bt_size = n;
+    return n;
 }
 #endif
 
+static void record_backtrace(void)
+{
+    bt_size = rec_backtrace(bt_data, MAX_BT_SIZE);
+}
+
+//for looking up functions from gdb:
+DLLEXPORT void gdblookup(ptrint_t ip)
+{
+    const char *func_name;
+    int line_num;
+    const char *file_name;
+    int fromC = frame_info_from_ip(&func_name, &line_num, &file_name, ip, 1);
+    if (func_name != NULL) {
+        if (fromC)
+            ios_printf(ios_stderr, "%s at %s: offset %x\n", func_name, file_name, line_num);
+        else
+            ios_printf(ios_stderr, "%s at %s:%d\n", func_name, file_name, line_num);
+    }
+}
+
+DLLEXPORT void gdbbacktrace()
+{
+    record_backtrace();
+    for(size_t i=0; i < bt_size; i++)
+        gdblookup(bt_data[i]);
+}
+
 // yield to exception handler
-static void throw_internal(jl_value_t *e)
+static void NORETURN throw_internal(jl_value_t *e)
 {
     jl_exception_in_transit = e;
     if (jl_current_task->eh != NULL) {
@@ -658,17 +703,23 @@ jl_function_t *jl_unprotect_stack_func;
 void jl_init_tasks(void *stack, size_t ssize)
 {
     _probe_arch();
-    jl_task_type = jl_new_struct_type(jl_symbol("Task"), jl_any_type,
+    jl_task_type = jl_new_struct_type(jl_symbol("Task"),
+                                      jl_any_type,
                                       jl_null,
-                                      jl_tuple(6, jl_symbol("parent"),
+                                      jl_tuple(6,
+                                               jl_symbol("parent"),
                                                jl_symbol("last"),
-                                               jl_symbol("tls"),
+                                               jl_symbol("storage"),
                                                jl_symbol("consumers"),
                                                jl_symbol("done"),
                                                jl_symbol("runnable")),
-                                      jl_tuple(6, jl_any_type, jl_any_type,
-                                               jl_any_type, jl_any_type,
-                                               jl_bool_type, jl_bool_type));
+                                      jl_tuple(6,
+                                               jl_any_type,
+                                               jl_any_type,
+                                               jl_any_type,
+                                               jl_any_type,
+                                               jl_bool_type,
+                                               jl_bool_type));
     jl_tupleset(jl_task_type->types, 0, (jl_value_t*)jl_task_type);
     jl_task_type->fptr = jl_f_task;
 

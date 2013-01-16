@@ -35,7 +35,7 @@ IOString(maxsize::Int) = (x=IOString(Array(Uint8,maxsize),true,true,maxsize); x.
 function read{T}(from::IOString, a::Array{T})
     if !from.readable error("read failed") end
     if isa(T, BitsKind)
-        nb = numel(a)*sizeof(T)
+        nb = length(a)*sizeof(T)
         if nb > nb_available(from)
             throw(EOFError())
         end
@@ -59,7 +59,9 @@ end
 
 read{T}(from::IOString, ::Type{Ptr{T}}) = convert(Ptr{T}, read(from, Uint))
 
-length(io::IOString) = (io.seekable ? io.size : nb_available(io))
+# TODO: IOString is not iterable, so doesn't really have a length.
+# This should maybe be sizeof() instead.
+#length(io::IOString) = (io.seekable ? io.size : nb_available(io))
 nb_available(io::IOString) = io.size - io.ptr + 1
 skip(io::IOString, n::Integer) = (io.ptr = min(io.ptr + n, io.size+1))
 function seek(io::IOString, n::Integer) 
@@ -78,7 +80,7 @@ function truncate(io::IOString, n::Integer)
     if n > io.maxsize || n < 0 error("truncate failed") end
     nadd = n - length(io.data)
     if nadd > 0
-        grow(io.data, nadd)
+        grow!(io.data, nadd)
     end
     io.data[io.size+1:end] = 0
     io.size = n
@@ -111,14 +113,14 @@ function ensureroom(io::IOString, nshort::Int)
     n = min(nshort + (io.append ? io.size : io.ptr-1), io.maxsize)
     ngrow = n - length(io.data)
     if ngrow > 0
-        grow(io.data, ngrow)
+        grow!(io.data, ngrow)
     end
     return io
 end
 eof(io::IOString) = (io.ptr-1 == io.size)
 function close(io::IOString)
     if io.writable
-        grow(io.data, -length(io.data))
+        grow!(io.data, -length(io.data))
     else
         io.data = Uint8[]
     end
@@ -144,6 +146,7 @@ function takebuf_array(io::IOString)
         else
             data = copy(data)
         end
+        grow!(data,io.size-length(data))
     else
         nbytes = nb_available(io)
         a = Array(Uint8, nbytes)
@@ -157,14 +160,17 @@ function takebuf_array(io::IOString)
 end
 takebuf_string(io::IOString) = bytestring(takebuf_array(io))
 
-function write{T}(to::IOString, a::Array{T})
-    if !to.writable error("write failed") end
+function write_sub{T}(to::IOString, a::Array{T}, offs, nel)
+    if !to.writable; error("write failed") end
+    if offs+nel-1 > length(a) || offs < 1 || nel < 0
+        throw(BoundsError())
+    end
     if isa(T, BitsKind)
-        nb = numel(a)*sizeof(T)
+        nb = nel*sizeof(T)
         ensureroom(to, nb)
         ptr = (to.append ? to.size+1 : to.ptr)
         nb = min(nb, length(to.data) - ptr + 1)
-        ccall(:memcpy, Void, (Ptr{Void}, Ptr{Void}, Int), pointer(to.data,ptr), a, nb)
+        ccall(:memcpy, Void, (Ptr{Void}, Ptr{Void}, Int), pointer(to.data,ptr), pointer(a,offs), nb)
         to.size = max(to.size, ptr - 1 + nb)
         if !to.append; to.ptr += nb; end
     else
@@ -172,6 +178,8 @@ function write{T}(to::IOString, a::Array{T})
     end
     nb
 end
+
+write(to::IOString, a::Array) = write_sub(to, a, 1, length(a))
 
 function write(to::IOString, a::Uint8)
     if !to.writable error("write failed") end

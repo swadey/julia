@@ -1,12 +1,12 @@
 # Linear algebra functions for dense matrices in column major format
 
-scale!(X::Array{Float32}, s::Real) = BLAS.scal!(numel(X), float32(s), X, 1)
+scale!(X::Array{Float32}, s::Real) = BLAS.scal!(length(X), float32(s), X, 1)
 
-scale!(X::Array{Float64}, s::Real) = BLAS.scal!(numel(X), float64(s), X, 1)
+scale!(X::Array{Float64}, s::Real) = BLAS.scal!(length(X), float64(s), X, 1)
 
-scale!(X::Array{Complex64}, s::Real) = (ccall(("sscal_",Base.libblas_name), Void, (Ptr{BlasInt}, Ptr{Float32}, Ptr{Complex64}, Ptr{BlasInt}), &(2*numel(X)), &s, X, &1); X)
+scale!(X::Array{Complex64}, s::Real) = (ccall(("sscal_",Base.libblas_name), Void, (Ptr{BlasInt}, Ptr{Float32}, Ptr{Complex64}, Ptr{BlasInt}), &(2*length(X)), &s, X, &1); X)
 
-scale!(X::Array{Complex128}, s::Real) = (ccall(("dscal_",Base.libblas_name), Void, (Ptr{BlasInt}, Ptr{Float64}, Ptr{Complex128}, Ptr{BlasInt}), &(2*numel(X)), &s, X, &1); X)
+scale!(X::Array{Complex128}, s::Real) = (ccall(("dscal_",Base.libblas_name), Void, (Ptr{BlasInt}, Ptr{Float64}, Ptr{Complex128}, Ptr{BlasInt}), &(2*length(X)), &s, X, &1); X)
 
 #Test whether a matrix is positive-definite
 
@@ -120,7 +120,7 @@ function diagm{T}(v::VecOrMat{T}, k::Integer)
         end
     end
 
-    n = numel(v)
+    n = length(v)
     if k >= 0 
         a = zeros(T, n+k, n+k)
         for i=1:n
@@ -608,7 +608,7 @@ type QRDense{T} <: Factorization{T}
     hh::Matrix{T}                       # Householder transformations and R
     tau::Vector{T}                      # Scalar factors of transformations
     function QRDense(hh::Matrix{T}, tau::Vector{T})
-        numel(tau) == min(size(hh)) ? new(hh, tau) : error("QR: mismatched dimensions")
+        length(tau) == min(size(hh)) ? new(hh, tau) : error("QR: mismatched dimensions")
     end
 end
 size(A::QRDense) = size(A.hh)
@@ -752,7 +752,10 @@ eigvals(x) = eig(x, false)
 # svd(A::StridedMatrix, thin::Bool) = svd(A,true,thin)
 # svdvals(A) = svd(A,false,true)[2]
 
-function svd{T<:BlasFloat}(A::StridedMatrix{T},vecs::Bool,thin::Bool)
+svdt(x::Number,vecs::Bool,thin::Bool) = vecs ? (x==0?one(x):x/abs(x),abs(x),one(x)) : ([],abs(x),[])
+svdt(x::Number,vecs::Bool,thin::Bool) = svdt(x, vecs, thin)
+
+function svdt{T<:BlasFloat}(A::StridedMatrix{T},vecs::Bool,thin::Bool)
     m,n = size(A)
     if m == 0 || n == 0
         if vecs; return (eye(m, thin ? n : m), zeros(0), eye(n,n)); end
@@ -762,11 +765,22 @@ function svd{T<:BlasFloat}(A::StridedMatrix{T},vecs::Bool,thin::Bool)
     LAPACK.gesdd!('N', copy(A))
 end
 
-svd{T<:Integer}(x::StridedMatrix{T},vecs,thin) = svd(float64(x),vecs,thin)
-svd(x::Number,vecs::Bool,thin::Bool) = vecs ? (x==0?one(x):x/abs(x),abs(x),one(x)) : ([],abs(x),[])
+svdt{T<:Integer}(x::StridedMatrix{T},vecs,thin) = svdt(float64(x),vecs,thin)
+svdt(A) = svdt(A,true,false)
+svdt(A, thin::Bool) = svdt(A,true,thin)
+
+svdt(x::Number,vecs::Bool,thin::Bool) = vecs ? (x==0?one(x):x/abs(x),abs(x),one(x)) : ([],abs(x),[])
+
+function svd(x::StridedMatrix,vecs::Bool,thin::Bool) 
+    (u, s, vt) = svdt(x,vecs,thin)
+    return (u, s, vt')
+end
+
 svd(A) = svd(A,true,false)
 svd(A, thin::Bool) = svd(A,true,thin)
-svdvals(A) = svd(A,false,true)[2]
+
+svdvals(A) = svdt(A,false,true)[2]
+
 
 function (\){T<:BlasFloat}(A::StridedMatrix{T}, B::StridedVecOrMat{T})
     Acopy = copy(A)
@@ -811,7 +825,7 @@ end
 
 ## Moore-Penrose inverse
 function pinv{T<:BlasFloat}(A::StridedMatrix{T})
-    u,s,vt      = svd(A, true)
+    u,s,vt      = svdt(A, true)
     sinv        = zeros(T, length(s))
     index       = s .> eps(real(one(T)))*max(size(A))*max(s)
     sinv[index] = 1 ./ s[index]
@@ -824,7 +838,7 @@ pinv(x::Number) = one(x)/x
 ## Basis for null space
 function null{T<:BlasFloat}(A::StridedMatrix{T})
     m,n = size(A)
-    _,s,vt = svd(A)
+    _,s,vt = svdt(A)
     if m == 0; return eye(T, n); end
     indstart = sum(s .> max(m,n)*max(s)*eps(eltype(s))) + 1
     vt[indstart:,:]'

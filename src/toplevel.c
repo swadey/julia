@@ -17,6 +17,7 @@
 #include <ctype.h>
 #include <math.h>
 #include "julia.h"
+#include <sys/stat.h>
 #include "builtin_proto.h"
 
 DLLEXPORT char *julia_home = NULL;
@@ -27,6 +28,7 @@ jl_module_t *jl_old_base_module = NULL;
 
 jl_value_t *jl_toplevel_eval_flex(jl_value_t *e, int fast);
 
+extern int base_module_conflict;
 jl_value_t *jl_eval_module_expr(jl_expr_t *ex)
 {
     assert(ex->head == module_sym);
@@ -49,6 +51,8 @@ jl_value_t *jl_eval_module_expr(jl_expr_t *ex)
         jl_old_base_module = jl_base_module;
         // pick up Base module during bootstrap
         jl_base_module = newm;
+    } else {
+        base_module_conflict = 1;
     }
     // export all modules from Main
     if (parent_module == jl_main_module)
@@ -183,7 +187,9 @@ int jl_eval_with_compiler_p(jl_expr_t *expr, int compileloops)
 
 extern int jl_in_inference;
 
-static jl_module_t *eval_import_path(jl_array_t *args)
+static jl_value_t *require_func=NULL;
+
+static jl_module_t *eval_import_path_(jl_array_t *args, int retrying)
 {
     // in A.B.C, first find a binding for A in the chain of module scopes
     // following parent links. then evaluate the rest of the path from there.
@@ -198,8 +204,20 @@ static jl_module_t *eval_import_path(jl_array_t *args)
             m = (jl_module_t*)mb->value;
             break;
         }
-        if (m == jl_main_module)
+        if (m == jl_main_module) {
+            if (!retrying) {
+                if (require_func == NULL && jl_base_module != NULL)
+                    require_func = jl_get_global(jl_base_module, jl_symbol("require"));
+                if (require_func != NULL) {
+                    jl_value_t *str = jl_cstr_to_string(var->name);
+                    JL_GC_PUSH(&str);
+                    jl_apply((jl_function_t*)require_func, &str, 1);
+                    JL_GC_POP();
+                    return eval_import_path_(args, 1);
+                }
+            }
             jl_errorf("in module path: %s not defined", var->name);
+        }
         m = m->parent;
     }
 
@@ -211,6 +229,11 @@ static jl_module_t *eval_import_path(jl_array_t *args)
             jl_errorf("invalid import statement");
     }
     return m;
+}
+
+static jl_module_t *eval_import_path(jl_array_t *args)
+{
+    return eval_import_path_(args, 0);
 }
 
 jl_value_t *jl_toplevel_eval_flex(jl_value_t *e, int fast)
@@ -230,15 +253,27 @@ jl_value_t *jl_toplevel_eval_flex(jl_value_t *e, int fast)
         return jl_eval_module_expr(ex);
     }
 
-    // handle import, using, export toplevel-only forms
-    if (ex->head == using_sym) {
+    // handle import, using, importall, export toplevel-only forms
+    if (ex->head == using_sym || ex->head == importall_sym) {
         jl_module_t *m = eval_import_path(ex->args);
         jl_sym_t *name = (jl_sym_t*)jl_cellref(ex->args, jl_array_len(ex->args)-1);
         assert(jl_is_symbol(name));
         m = (jl_module_t*)jl_eval_global_var(m, name);
         if (!jl_is_module(m))
-            jl_errorf("invalid using statement");
-        jl_module_using(jl_current_module, m);
+	    jl_errorf("invalid %s statement: name exists but does not refer to a module", ex->head->name);
+	if (ex->head == using_sym) {
+	    jl_module_using(jl_current_module, m);
+	}
+	else {
+            void **table = m->bindings.table;
+            for(size_t i=1; i < m->bindings.size; i+=2) {
+                if (table[i] != HT_NOTFOUND) {
+                    jl_binding_t *b = (jl_binding_t*)table[i];
+                    if (b->exportp && (b->owner==m || b->imported))
+                        jl_module_import(jl_current_module, m, b->name);
+                }
+            }
+        }
         return jl_nothing;
     }
 
@@ -335,7 +370,7 @@ jl_value_t *jl_toplevel_eval(jl_value_t *v)
 // repeatedly call jl_parse_next and eval everything
 void jl_parse_eval_all(char *fname)
 {
-    //ios_printf(ios_stderr, "***** loading %s\n", fname);
+    //jl_printf(JL_STDERR, "***** loading %s\n", fname);
     int last_lineno = jl_lineno;
     jl_lineno=0;
     jl_value_t *fn=NULL, *ln=NULL, *form=NULL;
@@ -374,9 +409,13 @@ int asprintf(char **strp, const char *fmt, ...);
 
 void jl_load(const char *fname)
 {
+    if (jl_current_module == jl_base_module) {
+        //This deliberatly uses ios, because stdio initialization has been moved to Julia
+        jl_printf(JL_STDOUT, "\e[0G\e[2K %s", fname);
+    }
     char *fpath = (char*)fname;
-    struct stat stbuf;
-    if (jl_stat(fpath, (char*)&stbuf) != 0) {
+    uv_statbuf_t stbuf;
+    if (jl_stat(fpath, (char*)&stbuf) != 0 || (stbuf.st_mode & S_IFMT) != S_IFREG) {
         jl_errorf("could not open file %s", fpath);
     }
     jl_start_parsing_file(fpath);

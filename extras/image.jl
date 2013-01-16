@@ -197,7 +197,7 @@ function ImageArray{DataType<:Number}(data::Array{DataType},arrayi_order::ASCIIS
     sz = size(data)
     szv = vcat(sz...)
     n_dims = length(sz)
-    if strlen(arrayi_order) != n_dims
+    if length(arrayi_order) != n_dims
         error("storage order string must have a length equal to the number of dimensions in the array")
     end
     # Enforce uniqueness of each array coordinate name
@@ -393,8 +393,8 @@ end
 
 function lut(pal::Vector, a)
     out = similar(a, eltype(pal))
-    n = numel(pal)
-    for i=1:numel(a)
+    n = length(pal)
+    for i=1:length(a)
         out[i] = pal[clamp(a[i], 1, n)]
     end
     out
@@ -406,7 +406,7 @@ function indexedcolor(data, pal)
 end
 
 function indexedcolor(data, pal, w, l)
-    n = numel(pal)-1
+    n = length(pal)-1
     if n == 0
         return fill(pal[1], size(data))
     end
@@ -485,7 +485,7 @@ end
 
 function imread(file::String)
     cmd = `convert -format "%w %h" -identify $file rgb:-`
-    stream = fdio(read_from(cmd).fd, true)
+    stream, _ = read_from(cmd)
     spawn(cmd)
     szline = readline(stream)
     spc = strchr(szline, ' ')
@@ -644,7 +644,7 @@ function ssd{T}(A::Array{T}, B::Array{T})
 end
 
 # normalized by Array size
-ssdn{T}(A::Array{T}, B::Array{T}) = ssd(A, B)/numel(A)
+ssdn{T}(A::Array{T}, B::Array{T}) = ssd(A, B)/length(A)
 
 # sum of absolute differences
 function sad{T}(A::Array{T}, B::Array{T})
@@ -652,7 +652,7 @@ function sad{T}(A::Array{T}, B::Array{T})
 end
 
 # normalized by Array size
-sadn{T}(A::Array{T}, B::Array{T}) = sad(A, B)/numel(A)
+sadn{T}(A::Array{T}, B::Array{T}) = sad(A, B)/length(A)
 
 # normalized cross correlation
 function ncc{T}(A::Array{T}, B::Array{T})
@@ -710,7 +710,7 @@ function imfilter{T}(img::Matrix{T}, filter::Matrix{T}, border::String, value)
         error("wrong border treatment")
     end
     # check if separable
-    U, S, V = svd(filter)
+    U, S, V = svdt(filter)
     separable = true;
     for i = 2:length(S)
         # assumption that <10^-7 \approx 0

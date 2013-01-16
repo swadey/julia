@@ -26,12 +26,19 @@ import Intrinsics.nan_dom_err
 # non-type specific math functions
 
 clamp(x::Real, lo::Real, hi::Real) = (x > hi ? hi : (x < lo ? lo : x))
+clamp{T<:Real}(x::AbstractArray{T,1}, lo::Real, hi::Real) = [clamp(xx, lo, hi) for xx in x]
+clamp{T<:Real}(x::AbstractArray{T,2}, lo::Real, hi::Real) =
+    [clamp(x[i,j], lo, hi) for i in 1:size(x,1), j in 1:size(x,2)]
+clamp{T<:Real}(x::AbstractArray{T}, lo::Real, hi::Real) =
+    reshape([clamp(xx, lo, hi) for xx in x], size(x))
 
 sinc(x::Number) = x==0 ? one(x)  : (pix=pi*x; oftype(x,sin(pix)/pix))
 cosc(x::Number) = x==0 ? zero(x) : (pix=pi*x; oftype(x,cos(pix)/x-sin(pix)/(pix*x)))
 
 radians2degrees(z::Real) = oftype(z, (180/pi) * z)
 degrees2radians(z::Real) = oftype(z, (pi/180) * z)
+radians2degrees(z::Integer) = oftype(float(z), (180/pi) * z)
+degrees2radians(z::Integer) = oftype(float(z), (pi/180) * z)
 
 for (finv, f) in ((:sec, :cos), (:csc, :sin), (:cot, :tan),
                   (:sech, :cosh), (:csch, :sinh), (:coth, :tanh))
@@ -179,7 +186,7 @@ begin
     function frexp(A::Array{Float64})
         f = similar(A)
         e = Array(Int, size(A))
-        for i = 1:numel(A)
+        for i = 1:length(A)
             f[i] = ccall((:frexp,libm), Float64, (Float64, Ptr{Int32}), A[i], exp)
             e[i] = exp[1]
         end
@@ -188,7 +195,7 @@ begin
     function frexp(A::Array{Float32})
         f = similar(A)
         e = Array(Int, size(A))
-        for i = 1:numel(A)
+        for i = 1:length(A)
             f[i] = ccall((:frexpf,libm), Float32, (Float32, Ptr{Int32}), A[i], exp)
             e[i] = exp[1]
         end

@@ -11,8 +11,8 @@ if false
     # simple print definitions for debugging. enable these if something
     # goes wrong during bootstrap before printing code is available.
     length(a::Array) = arraylen(a)
-    print(x) = print(stdout_stream, x)
-    show(x) = show(stdout_stream, x)
+    print(x) = print(STDOUT, x)
+    show(x) = show(STDOUT, x)
     write(io, a::Array{Uint8,1}) =
         ccall(:ios_write, Uint, (Ptr{Void}, Ptr{Void}, Uint),
               io.ios, a, length(a))
@@ -79,6 +79,11 @@ include("inference.jl")
 # I/O, strings & printing
 include("io.jl")
 include("iostring.jl")
+include("stream.jl")
+include("fs.jl")
+importall FS
+include("process.jl")
+ccall(:jl_get_uv_hooks, Void, ())
 include("char.jl")
 include("ascii.jl")
 include("utf8.jl")
@@ -88,12 +93,11 @@ include("show.jl")
 include("grisu.jl")
 import Grisu.print_shortest
 include("printf.jl")
-using Printf
+importall Printf
 
 # concurrency and parallelism
 include("iterator.jl")
 include("task.jl")
-include("process.jl")
 include("serialize.jl")
 include("multi.jl")
 
@@ -114,17 +118,17 @@ include("client.jl")
 include("intfuncs.jl")
 include("floatfuncs.jl")
 include("math.jl")
-using Math
+importall Math
 
 # random number generation and statistics
 include("statistics.jl")
 include("librandom.jl")
 include("rng.jl")
-using RNG
+importall RNG
 
 # Combinatorics
 include("sort.jl")
-using Sort
+importall Sort
 include("combinatorics.jl")
 
 # distributed arrays and memory-mapped arrays
@@ -151,15 +155,22 @@ include("linalg_sparse.jl")
 # signal processing
 include("fftw.jl")
 include("dsp.jl")
-using DSP
+importall DSP
+
+# deprecated functions
+include("deprecated.jl")
+
+# git utils & package manager
+include("git.jl")
+include("pkg.jl")
 
 include = include_from_node1
+print("\e[0G\e[2K")
 
 # prime method cache with some things we know we'll need right after startup
 compile_hint(pwd, ())
 compile_hint(fdio, (Int32,))
 compile_hint(ProcessGroup, (Int, Array{Any,1}, Array{Any,1}))
-compile_hint(select_read, (FDSet, Float64))
 compile_hint(next, (Dict{Any,Any}, Int))
 compile_hint(start, (Dict{Any,Any},))
 compile_hint(perform_work, ())
@@ -175,9 +186,9 @@ compile_hint(Dict{Any,Any}, (Int,))
 compile_hint(Set, ())
 compile_hint(assign, (Dict{Any,Any}, Bool, Cmd))
 compile_hint(rehash, (Dict{Any,Any}, Int))
-compile_hint(run, (Cmd,))
-compile_hint(spawn, (Cmd,))
-compile_hint(assign, (Dict{Any,Any}, Bool, FileDes))
+#compile_hint(run, (Cmd,))
+#compile_hint(spawn, (Cmd,))
+#compile_hint(assign, (Dict{Any,Any}, Bool, FileDes))
 compile_hint(wait, (Int32,))
 compile_hint(system_error, (Symbol, Bool))
 compile_hint(SystemError, (ASCIIString,))
@@ -197,23 +208,19 @@ compile_hint(ht_keyindex, (Dict{Any,Any}, Int32))
 compile_hint(perform_work, (WorkItem,))
 compile_hint(notify_done, (WorkItem,))
 compile_hint(work_result, (WorkItem,))
-compile_hint(del_fd_handler, (Int32,))
-compile_hint(enqueue, (Array{WorkItem,1}, WorkItem))
+compile_hint(unshift!, (Array{WorkItem,1}, WorkItem))
 compile_hint(enq_work, (WorkItem,))
-compile_hint(pop, (Array{WorkItem,1},))
+compile_hint(pop!, (Array{WorkItem,1},))
 compile_hint(string, (Int,))
 compile_hint(parse_int, (Type{Int}, ASCIIString, Int))
 compile_hint(repeat, (ASCIIString, Int))
 compile_hint(KeyError, (Int,))
 compile_hint(show, (Float64,))
 compile_hint(match, (Regex, ASCIIString))
-compile_hint(strlen, (ASCIIString,))
+compile_hint(length, (ASCIIString,))
 compile_hint(alignment, (Float64,))
 compile_hint(repl_callback, (Expr, Int))
 compile_hint(istaskdone, (Task,))
-compile_hint(make_stdout_stream, ())
-compile_hint(make_stdin_stream, ())
-compile_hint(make_stderr_stream, ())
 compile_hint(int, (Uint64,))
 compile_hint(copy, (Bool,))
 compile_hint(bool, (Bool,))

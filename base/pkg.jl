@@ -1,12 +1,13 @@
-require("git")
-require("pkgmetadata")
-
 module Pkg
 #
 # Julia's git-based declarative package manager
 #
 
+include("pkg/metadata.jl")
+include("pkg/resolve.jl")
+
 using Metadata
+using Resolve
 
 import Git
 
@@ -17,7 +18,12 @@ const DEFAULT_META = "git://github.com/JuliaLang/METADATA.jl.git"
 function cd_pkgdir(f::Function)
     dir = julia_pkgdir()
     if !isdir(dir)
-        error("Package directory $dir doesn't exist; run Pkg.init() to create it.")
+        if has(ENV,"JULIA_PKGDIR")
+            error("Package directory $dir doesn't exist; run Pkg.init() to create it.")
+        else
+            warn("Initializing default package repository $dir.")
+            init()
+        end
     end
     cd(f,dir)
 end
@@ -51,17 +57,16 @@ status(pkg::String) = print_pkg_status(pkg, "$(julia_pkgdir())/$pkg")
 
 function init(meta::String)
     dir = julia_pkgdir()
-    if isdir(dir)
-        error("Package directory $dir already exists.")
-    end
+    isdir(dir) && error("Package directory $dir already exists.")
     try
         run(`mkdir -p $dir`)
         cd(dir) do
             # create & configure
+            promptuserinfo()
             run(`git init`)
             run(`git commit --allow-empty -m "Initial empty commit"`)
             run(`git remote add origin .`)
-            if success(`git config --global github.user` > "/dev/null")
+        if success(`git config --global github.user` > SpawnNullStream())
                 base = basename(dir)
                 user = readchomp(`git config --global github.user`)
                 run(`git config remote.origin.url git@github.com:$user/$base`)
@@ -78,8 +83,9 @@ function init(meta::String)
             cd(Git.autoconfig_pushurl,"METADATA")
             Metadata.gen_hashes()
         end
-    catch
+    catch e 
         run(`rm -rf $dir`)
+        rethrow(e)
     end
 end
 init() = init(DEFAULT_META)
@@ -121,7 +127,7 @@ end
 function add(pkgs::Union(String,VersionSet)...)
     pkgs_ = VersionSet[]
     for pkg in pkgs
-        Base.push(pkgs_, isa(pkg,VersionSet) ? pkg : VersionSet(pkg))
+        Base.push!(pkgs_, isa(pkg,VersionSet) ? pkg : VersionSet(pkg))
     end
     add(pkgs_)
 end
@@ -161,6 +167,15 @@ end
 required() = cd_pkgdir() do
     parse_requires("REQUIRE")
 end
+required(pkg::String) = cd_pkgdir() do
+    req = required()
+    for vset in req
+        if isequal(vset.package, pkg)
+            return vset.versions
+        end
+    end
+    return nothing
+end
 
 installed() = cd_pkgdir() do
     h = Dict{String,Union(VersionNumber,String)}()
@@ -170,6 +185,22 @@ installed() = cd_pkgdir() do
         end
     end
     return h
+end
+installed(pkg::String) = cd_pkgdir() do
+    get(installed(), pkg, nothing)
+end
+
+function runbuildscript(pkg)
+    dir = package_directory(pkg)
+    path = joinpath(dir, "deps")
+    if isdir(path)
+        cd(path) do
+            if isfile("build.jl")
+                info(strcat("Running build script for package ", pkg))
+                include("build.jl")
+            end
+        end
+    end
 end
 
 # update packages from requirements
@@ -184,13 +215,13 @@ function _resolve()
                 append!(reqs,parse_requires("$path/REQUIRE"))
                 if isfile("$path/VERSION")
                     ver = convert(VersionNumber,readchomp("$path/VERSION"))
-                    Base.push(reqs,VersionSet(pkg,[ver]))
+                    Base.push!(reqs,VersionSet(pkg,[ver]))
                 end
             end
         end
     end
     sort!(reqs)
-    want = Metadata.resolve(reqs)
+    want = Resolve.resolve(reqs)
     pkgs = sort!(keys(merge(want,have)))
     for pkg in pkgs
         if has(have,pkg)
@@ -208,6 +239,7 @@ function _resolve()
                         run(`git checkout -q $(want[pkg])`)
                     end
                     run(`git add -- $pkg`)
+                    runbuildscript(pkg)
                 end
             else
                 ver = Metadata.version(pkg,have[pkg])
@@ -227,7 +259,7 @@ function _resolve()
             url = Metadata.pkg_url(pkg)
             run(`git submodule add --reference . $url $pkg`)
             cd(pkg) do
-                try run(`git checkout -q $(want[pkg])` .> "/dev/null")
+                try run(`git checkout -q $(want[pkg])` .> SpawnNullStream())
                 catch
                     run(`git fetch -q`)
                     try run(`git checkout -q $(want[pkg])`)
@@ -238,6 +270,7 @@ function _resolve()
                 Git.autoconfig_pushurl()
             end
             run(`git add -- $pkg`)
+            runbuildscript(pkg)
         end
     end
 end
@@ -299,7 +332,7 @@ function commit(f::Function, msg::String)
     assert_git_clean()
     try f()
     catch
-        print(stderr_stream,
+        print(STDERR,
               "\n\n*** ERROR ENCOUNTERED ***\n\n",
               "Rolling back to HEAD...\n")
         checkout()
@@ -310,7 +343,7 @@ function commit(f::Function, msg::String)
         run(`git diff --name-only --diff-filter=D HEAD^ HEAD` | `xargs rm -rf`)
         checkout()
     elseif !Git.dirty()
-        println(stderr_stream, "Nothing to commit.")
+        println(STDERR, "Nothing to commit.")
     else
         error("There are both staged and unstaged changes to packages.")
     end
@@ -373,7 +406,7 @@ pull() = cd_pkgdir() do
         Cc, conflicts, deleted = Git.merge_configs(Bc,Lc,Rc)
         # warn about config conflicts
         for (key,vals) in conflicts
-            print(stderr_stream,
+            print(STDERR,
                 "\nModules config conflict for $key:\n",
                 "  local value  = $(vals[1])\n",
                 "  remote value = $(vals[2])\n",
@@ -410,7 +443,7 @@ pull() = cd_pkgdir() do
     if Git.unstaged()
         unmerged = readall(`git ls-files -m` | `sort` | `uniq`)
         unmerged = replace(unmerged, r"^", "    ")
-        print(stderr_stream,
+        print(STDERR,
             "\n\n*** WARNING ***\n\n",
             "You have unresolved merge conflicts in the following files:\n\n",
             unmerged,
@@ -458,7 +491,7 @@ end
 latest_version(pkg::String) = cd_pkgdir() do
     vers = VersionNumber[]
     for (ver, _) in Metadata.each_tagged_version(pkg)
-        Base.push(vers, ver)
+        Base.push!(vers, ver)
     end
     max(vers)
 end
@@ -515,6 +548,29 @@ function major(pkg)
     version(pkg, VersionNumber(lver.major+1))
 end
 
+function promptuserinfo()
+    if(isempty(chomp(readall(ignorestatus(`git config --global user.name`)))))
+        info("Git would like to know your name to initialize your .julia directory.\nEnter it below:")
+        name = chomp(readline(STDIN))
+        if(isempty(name))
+            error("Could not read name")
+        else
+            run(`git config --global user.name $name`)
+            info("Thank you. You can change it using run(`git config --global user.name NAME`)")
+        end  
+    end
+    if(isempty(chomp(readall(ignorestatus(`git config --global user.email`)))))
+        info("Git would like to know your email to initialize your .julia directory.\nEnter it below:")
+        email = chomp(readline(STDIN))
+        if(isempty(email))
+            error("Could not read email")
+        else
+            run(`git config --global user.email $email`)
+            info("Thank you. You can change it using run(`git config --global user.email EMAIL`)")
+        end
+    end
+end
+
 function new(pkg::String)
     newpath = joinpath(julia_pkgdir(), pkg)
     cd_pkgdir() do
@@ -547,6 +603,7 @@ with the correct remote name for your repository."
             try
                 sha1 = ""
                 cd(pkg) do
+                    promptuserinfo()
                     run(`git init`)
                     run(`git commit --allow-empty -m "Initial empty commit"`)
                     touch("LICENSE.md") # Should insert MIT content

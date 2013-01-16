@@ -64,8 +64,7 @@ dot(x::Number, y::Number) = conj(x) * y
 
 # Matrix-vector multiplication
 
-function (*){T<:BlasFloat}(A::StridedMatrix{T},
-                            X::StridedVector{T})
+function (*){T<:BlasFloat}(A::StridedMatrix{T}, X::StridedVector{T})
     Y = similar(A, size(A,1))
     gemv(Y, 'N', A, X)
 end
@@ -80,6 +79,14 @@ end
 
 At_mul_B{T<:BlasFloat}(y::StridedVector{T}, A::StridedMatrix{T}, x::StridedVector{T}) = gemv(y, 'T', A, x)
 At_mul_B(y::StridedVector, A::StridedMatrix, x::StridedVector) = generic_matvecmul(y, 'T', A, x)
+
+Ac_mul_B{T<:Union(Float64,Float32)}(A::StridedMatrix{T}, x::StridedVector{T}) = At_mul_B(A, x)
+function Ac_mul_B{T<:Union(Complex128,Complex64)}(A::StridedMatrix{T}, x::StridedVector{T})
+    y = similar(A, size(A, 2))
+    gemv(y, 'C', A, x)
+end
+Ac_mul_B(y::StridedVector, A::StridedMatrix, x::StridedVector) = generic_matvecmul(y, 'C', A, x)
+
 
 # Matrix-matrix multiplication
 
