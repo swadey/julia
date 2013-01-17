@@ -104,7 +104,7 @@ function eval_user_input(ast::ANY, show_value)
     println()
 end
 
-function readBuffer(stream::TTY, nread)
+function readBuffer(stream::AsyncStream, nread)
     global _repl_enough_stdin::Bool    
     while !_repl_enough_stdin && nb_available(stream.buffer) > 0
         nread = int(memchr(stream.buffer,'\n')) # never more than one line or readline explodes :O
@@ -122,6 +122,7 @@ function readBuffer(stream::TTY, nread)
         end
         ptr = pointer(stream.buffer.data,stream.buffer.ptr)
         skip(stream.buffer,nread)
+        #println(STDERR,stream.buffer.data[stream.buffer.ptr-nread:stream.buffer.ptr-1])
         ccall(:jl_readBuffer,Void,(Ptr{Void},Int32),ptr,nread)
     end
     return false
@@ -299,10 +300,8 @@ function _start()
         end
 
         global const LOAD_PATH = ByteString[
-            ".",
+            ".", # TODO: should we really look here?
             abspath(julia_pkgdir()),
-            abspath(JULIA_HOME,"..","share","julia"),
-            abspath(JULIA_HOME,"..","share","julia","base"),
             abspath(JULIA_HOME,"..","share","julia","extras"),
         ]
 
@@ -327,7 +326,7 @@ function _start()
         println()
         exit(1)
     end
-    exit(0) #HACK: always exit using jl_exit
+    ccall(:uv_atexit_hook, Void, ())
 end
 
 const atexit_hooks = {}

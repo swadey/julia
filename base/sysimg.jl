@@ -5,7 +5,7 @@ eval(m,x) = Core.eval(m,x)
 
 include = Core.include
 
-include("export.jl")
+include("exports.jl")
 
 if false
     # simple print definitions for debugging. enable these if something
@@ -110,9 +110,11 @@ include("errno_h.jl")
 include("file.jl")
 include("path.jl")
 include("stat.jl")
+importall FileStat
 
-# front end
+# front end & code loading
 include("client.jl")
+include("loading.jl")
 
 # core math functions
 include("intfuncs.jl")
@@ -138,9 +140,10 @@ include("mmap.jl")
 
 # utilities - version, timing, help, edit
 include("version.jl")
-include("util.jl")
 include("datafmt.jl")
 include("deepcopy.jl")
+include("util.jl")
+include("test.jl")
 
 # linear algebra
 include("blas.jl")
