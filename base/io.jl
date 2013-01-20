@@ -29,19 +29,15 @@ write(s::IO, x::Uint8) = error(typeof(s)," does not support byte I/O")
 
 if ENDIAN_BOM == 0x01020304
     function write(s::IO, x::Integer)
-        sz = sizeof(x)
-        for n = sz:-1:1
+        for n = sizeof(x):-1:1
             write(s, uint8((x>>>((n-1)<<3))))
         end
-        sz
     end
 else
     function write(s::IO, x::Integer)
-        sz = sizeof(x)
-        for n = 1:sz
+        for n = 1:sizeof(x)
             write(s, uint8((x>>>((n-1)<<3))))
         end
-        sz
     end
 end
 
@@ -50,11 +46,9 @@ write(s::IO, x::Float32) = write(s, box(Int32,unbox(Float32,x)))
 write(s::IO, x::Float64) = write(s, box(Int64,unbox(Float64,x)))
 
 function write(s::IO, a::AbstractArray)
-    nb = 0
     for i = 1:length(a)
-        nb += write(s, a[i])
+        write(s, a[i])
     end
-    nb
 end
 
 function write(s::IO, c::Char)
@@ -318,11 +312,12 @@ memio() = memio(0, true)
 
 ## low-level calls ##
 
-write(s::IOStream, b::Uint8) = int(ccall(:jl_putc, Int32, (Uint8, Ptr{Void}), b, s.ios))
+write(s::IOStream, b::Uint8) = ccall(:jl_putc, Int32, (Uint8, Ptr{Void}), b, s.ios)
+write(s::IOStream, c::Char) = ccall(:jl_pututf8, Int32, (Ptr{Void}, Char), s.ios, c)
 
 function write{T}(s::IOStream, a::Array{T})
     if isa(T,BitsKind)
-        ccall(:ios_write, Int, (Ptr{Void}, Ptr{Void}, Uint),
+        ccall(:jl_write, Uint, (Ptr{Void}, Ptr{Void}, Uint),
               s.ios, a, length(a)*sizeof(T))
     else
         invoke(write, (IO, Array), s, a)
@@ -330,7 +325,7 @@ function write{T}(s::IOStream, a::Array{T})
 end
 
 function write(s::IOStream, p::Ptr, nb::Integer)
-    ccall(:ios_write, Int, (Ptr{Void}, Ptr{Void}, Uint), s.ios, p, nb)
+    ccall(:jl_write, Uint, (Ptr{Void}, Ptr{Void}, Uint), s.ios, p, nb)
 end
 
 function write{T,N,A<:Array}(s::IOStream, a::SubArray{T,N,A})
@@ -339,11 +334,10 @@ function write{T,N,A<:Array}(s::IOStream, a::SubArray{T,N,A})
     end
     colsz = size(a,1)*sizeof(T)
     if N<=1
-        return write(s, pointer(a, 1), colsz)
+        write(s, pointer(a, 1), colsz)
     else
         cartesian_map((idxs...)->write(s, pointer(a, idxs), colsz),
                       tuple(1, size(a)[2:]...))
-        return colsz*trailingsize(a,2)
     end
 end
 
@@ -373,7 +367,7 @@ end
 
 ## text I/O ##
 
-write(s::IOStream, c::Char) = int(ccall(:ios_pututf8, Int32, (Ptr{Void}, Char), s.ios, c))
+write(s::IOStream, c::Char) = ccall(:ios_pututf8, Int32, (Ptr{Void}, Char), s.ios, c)
 read(s::IOStream, ::Type{Char}) = ccall(:jl_getutf8, Char, (Ptr{Void},), s.ios)
 
 takebuf_string(s::IOStream) =
